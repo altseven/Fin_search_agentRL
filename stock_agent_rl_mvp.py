@@ -111,6 +111,7 @@ class MVPConfig:
     rollout_tp: int = 2
     rollout_gpu_memory_utilization: float = 0.45
     command_file: str = "run_verl_stock_grpo.sh"
+    auto_download_model: bool = True
 
 
 def require_pandas() -> None:
@@ -1191,6 +1192,31 @@ Then run this script or the verl command with:
     print(msg.strip())
 
 
+def ensure_model_available(cfg: MVPConfig) -> None:
+    if not cfg.auto_download_model:
+        return
+    if not is_local_model_path(cfg.model_path):
+        return
+    model_dir = Path(cfg.model_path).expanduser()
+    if model_dir.exists() and any(model_dir.iterdir()):
+        log(f"Model directory exists: {model_dir}")
+        return
+    log(f"Model directory missing or empty, downloading {DEFAULT_HF_MODEL_ID} to {model_dir}")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "-U", "modelscope"], check=True)
+    subprocess.run(
+        [
+            "modelscope",
+            "download",
+            "--model",
+            DEFAULT_HF_MODEL_ID,
+            "--local_dir",
+            str(model_dir),
+        ],
+        check=True,
+    )
+
+
 def make_verl_command(cfg: MVPConfig, train_path: Path, valid_path: Path) -> str:
     script_path = Path(__file__).resolve()
     repo = Path(cfg.verl_dir).expanduser().resolve()
@@ -1352,8 +1378,9 @@ def parse_args(argv: list[str] | None = None) -> MVPConfig:
     p.add_argument("--rollout-tp", type=int, default=2)
     p.add_argument("--rollout-gpu-memory-utilization", type=float, default=0.45)
     p.add_argument("--command-file", default="run_verl_stock_grpo.sh")
+    p.add_argument("--no-auto-download-model", dest="auto_download_model", action="store_false")
     p.add_argument("--no-write-verl-command", dest="write_verl_command", action="store_false")
-    p.set_defaults(write_verl_command=True)
+    p.set_defaults(write_verl_command=True, auto_download_model=True)
     args = p.parse_args(argv)
     return MVPConfig(**vars(args))
 
@@ -1397,6 +1424,7 @@ def main(
     rollout_tp: int = 2,
     rollout_gpu_memory_utilization: float = 0.45,
     command_file: str = "run_verl_stock_grpo.sh",
+    auto_download_model: bool = True,
 ) -> dict[str, Any]:
     cfg = MVPConfig(
         mode=mode,
@@ -1437,6 +1465,7 @@ def main(
         rollout_tp=rollout_tp,
         rollout_gpu_memory_utilization=rollout_gpu_memory_utilization,
         command_file=command_file,
+        auto_download_model=auto_download_model,
     )
     random.seed(cfg.seed)
     dirs = ensure_dirs(cfg)
@@ -1453,6 +1482,9 @@ def main(
         print_download_hints(cfg.model_path, cfg.model_dir)
         if cfg.mode == "download-hints":
             return results
+
+    if cfg.mode == "all-train":
+        ensure_model_available(cfg)
 
     if cfg.mode in ("all", "all-train", "build-data"):
         build_data(cfg)

@@ -12,20 +12,19 @@ Single-file MVP for a stock search-agent RLVR experiment with Tushare data and v
 
 ## Quick Start
 
+Clone 后最省事的一条命令如下，不需要 `export`，不需要自己找最新 result 目录，模型也会自动下载到 `model/Qwen3-4B`：
+
+```bash
+python3 stock_agent_rl_mvp.py --mode all-train --tushare-token "your_token"
+```
+
+如果不想每次在命令里传 token，可以用本地配置文件：
+
 ```bash
 cp local_config.example.py local_config.py
 ```
 
-Open `local_config.py` and paste your Tushare token.
-
-Download Qwen3-4B into `model/`:
-
-```bash
-pip install -U modelscope
-modelscope download --model Qwen/Qwen3-4B --local_dir model/Qwen3-4B
-```
-
-Run the whole MVP and start verl training:
+Open `local_config.py` and paste your Tushare token. Then run:
 
 ```bash
 python3 stock_agent_rl_mvp.py --mode all-train
@@ -34,7 +33,7 @@ python3 stock_agent_rl_mvp.py --mode all-train
 If you only want to build data and generate the training script:
 
 ```bash
-python3 stock_agent_rl_mvp.py --mode all
+python3 stock_agent_rl_mvp.py --mode all --tushare-token "your_token"
 ```
 
 If training was interrupted and you want to run the latest generated training script:
@@ -43,10 +42,17 @@ If training was interrupted and you want to run the latest generated training sc
 python3 stock_agent_rl_mvp.py --mode train-latest
 ```
 
-You can also pass the Tushare token directly without editing `local_config.py`:
+To download Qwen3-4B manually instead of auto-downloading:
 
 ```bash
-python3 stock_agent_rl_mvp.py --mode all-train --tushare-token "your_token"
+pip install -U modelscope
+modelscope download --model Qwen/Qwen3-4B --local_dir model/Qwen3-4B
+```
+
+Then disable auto-download:
+
+```bash
+python3 stock_agent_rl_mvp.py --mode all-train --no-auto-download-model --tushare-token "your_token"
 ```
 
 For the custom Tushare endpoint, the script sets:
