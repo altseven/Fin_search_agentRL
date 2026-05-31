@@ -1,0 +1,19 @@
+# Local OS / Python cache
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Runtime data. Do not commit downloaded market data.
+data/*
+!data/.gitkeep
+
+# Local model weights. Do not commit downloaded Qwen/HF/ModelScope models.
+model/*
+!model/.gitkeep
+
+# Experiment outputs. Do not commit per-run result folders or checkpoints.
+result/*
+!result/.gitkeep
+
+# Optional generated root-level training launcher; the script now writes it under result/<run_id>/.
+run_verl_stock_grpo.sh
