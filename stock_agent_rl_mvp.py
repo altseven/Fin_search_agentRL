@@ -1234,6 +1234,7 @@ export NCCL_P2P_DISABLE=1
 export NCCL_IB_DISABLE=1
 
 cd "{repo}"
+ray stop --force || true
 
 python3 -m verl.trainer.main_ppo \\
   algorithm.adv_estimator=grpo \\
@@ -1314,7 +1315,11 @@ def run_verl_command_script(script_path: Path) -> None:
     if not script_path.exists():
         raise FileNotFoundError(f"verl command script not found: {script_path}")
     log(f"Launching verl training: {script_path}")
-    subprocess.run(["bash", str(script_path)], check=True)
+    env = os.environ.copy()
+    env.setdefault("NCCL_P2P_DISABLE", "1")
+    env.setdefault("NCCL_IB_DISABLE", "1")
+    subprocess.run(["ray", "stop", "--force"], env=env, check=False)
+    subprocess.run(["bash", str(script_path)], env=env, check=True)
 
 
 def find_latest_verl_command(result_dir: str, command_file: str) -> Path:
