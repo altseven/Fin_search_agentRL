@@ -1230,6 +1230,8 @@ set -xeuo pipefail
 export PYTHONPATH="{repo}:${{PYTHONPATH:-}}"
 export STOCK_AGENT_DATA_DIR="{data_root}"
 export HYDRA_FULL_ERROR=1
+export NCCL_P2P_DISABLE=1
+export NCCL_IB_DISABLE=1
 
 cd "{repo}"
 
