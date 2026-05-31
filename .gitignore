@@ -3,6 +3,9 @@
 __pycache__/
 *.py[cod]
 
+# Local credentials/config. Copy local_config.example.py to local_config.py.
+local_config.py
+
 # Runtime data. Do not commit downloaded market data.
 data/*
 !data/.gitkeep

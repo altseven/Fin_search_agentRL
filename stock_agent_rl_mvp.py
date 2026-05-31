@@ -10,12 +10,12 @@ This file intentionally keeps the first version small:
 5. Provide verl function tools and a custom reward function from this same file.
 6. Run a rule-agent baseline locally for smoke testing.
 
-The Tushare token is deliberately not hard-coded. Pass it with:
+The Tushare token is deliberately not committed to git. For simple use, copy
+local_config.example.py to local_config.py and paste your token there.
 
-    export TUSHARE_TOKEN="..."
-    python3 stock_agent_rl_mvp.py --mode all
+    python3 stock_agent_rl_mvp.py --mode all-train
 
-or:
+You can also pass it directly without shell export:
 
     python3 stock_agent_rl_mvp.py --mode all --tushare-token "..."
 
@@ -30,6 +30,7 @@ import math
 import os
 import random
 import re
+import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -119,6 +120,18 @@ def require_pandas() -> None:
 
 def log(msg: str) -> None:
     print(time.strftime("[%Y-%m-%d %H:%M:%S]"), msg, flush=True)
+
+
+def load_local_config_value(name: str) -> Any:
+    path = Path(__file__).resolve().parent / "local_config.py"
+    if not path.exists():
+        return None
+    namespace: dict[str, Any] = {}
+    try:
+        exec(path.read_text(encoding="utf-8"), namespace)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to read local_config.py: {exc}") from exc
+    return namespace.get(name)
 
 
 def normalize_date(date: str | int) -> str:
@@ -216,7 +229,7 @@ def maybe_read_table(stem: Path) -> "pd.DataFrame | None":
 
 
 def make_tushare_client(token: str | None, http_url: str = DEFAULT_TUSHARE_HTTP_URL) -> Any:
-    token = token or os.environ.get("TUSHARE_TOKEN")
+    token = token or load_local_config_value("TUSHARE_TOKEN") or os.environ.get("TUSHARE_TOKEN")
     if not token:
         raise RuntimeError(
             "No Tushare token found. Pass --tushare-token, set TUSHARE_TOKEN, "
@@ -1169,11 +1182,6 @@ def print_download_hints(model_path: str = DEFAULT_MODEL_PATH, model_dir: str = 
     msg = f"""
 Model download hints for China mainland networks:
 
-Option A: Hugging Face mirror
-  export HF_ENDPOINT=https://hf-mirror.com
-  huggingface-cli download {DEFAULT_HF_MODEL_ID} --local-dir {local_dir}
-
-Option B: ModelScope
   pip install -U modelscope
   modelscope download --model {DEFAULT_HF_MODEL_ID} --local_dir {local_dir}
 
@@ -1271,9 +1279,43 @@ def write_verl_command_script(cfg: MVPConfig) -> Path:
     return out
 
 
+def run_verl_command_script(script_path: Path) -> None:
+    if not script_path.exists():
+        raise FileNotFoundError(f"verl command script not found: {script_path}")
+    log(f"Launching verl training: {script_path}")
+    subprocess.run(["bash", str(script_path)], check=True)
+
+
+def find_latest_verl_command(result_dir: str, command_file: str) -> Path:
+    base = Path(result_dir).expanduser().resolve()
+    candidates: list[Path] = []
+    if base.exists():
+        for run_dir in base.glob("*_result*"):
+            script = run_dir / command_file
+            if script.exists():
+                candidates.append(script)
+    if not candidates:
+        raise FileNotFoundError(f"No {command_file} found under {base}/*_result*/")
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return candidates[0]
+
+
 def parse_args(argv: list[str] | None = None) -> MVPConfig:
     p = argparse.ArgumentParser(description="Single-file MVP for stock search-agent RL with Tushare + verl.")
-    p.add_argument("--mode", default="all", choices=["all", "build-data", "export-verl", "rule-rollout", "print-verl-command", "download-hints"])
+    p.add_argument(
+        "--mode",
+        default="all",
+        choices=[
+            "all",
+            "all-train",
+            "build-data",
+            "export-verl",
+            "rule-rollout",
+            "print-verl-command",
+            "train-latest",
+            "download-hints",
+        ],
+    )
     p.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
     p.add_argument("--model-dir", default=DEFAULT_MODEL_DIR)
     p.add_argument("--result-dir", default=DEFAULT_RESULT_DIR)
@@ -1407,31 +1449,42 @@ def main(
     log(f"Run output dir: {dirs['run']}")
 
     results: dict[str, Any] = {"config": config_for_log}
-    if cfg.mode in ("all", "download-hints"):
+    if cfg.mode in ("all", "all-train", "download-hints"):
         print_download_hints(cfg.model_path, cfg.model_dir)
         if cfg.mode == "download-hints":
             return results
 
-    if cfg.mode in ("all", "build-data"):
+    if cfg.mode in ("all", "all-train", "build-data"):
         build_data(cfg)
         results["data_built"] = True
 
-    if cfg.mode in ("all", "export-verl"):
+    if cfg.mode in ("all", "all-train", "export-verl"):
         train_path, valid_path = export_verl_dataset(cfg)
         results["train_parquet"] = str(train_path)
         results["valid_parquet"] = str(valid_path)
 
-    if cfg.mode in ("all", "rule-rollout"):
+    if cfg.mode in ("all", "all-train", "rule-rollout"):
         metrics_path = run_rule_rollout(cfg)
         results["rule_metrics"] = str(metrics_path)
 
-    if cfg.mode in ("all", "print-verl-command"):
+    if cfg.mode in ("all", "all-train", "print-verl-command"):
         if cfg.write_verl_command:
             path = write_verl_command_script(cfg)
             results["verl_command_file"] = str(path)
         else:
             dirs = ensure_dirs(cfg)
             print(make_verl_command(cfg, (dirs["verl"] / "train.parquet").resolve(), (dirs["verl"] / "valid.parquet").resolve()))
+
+    if cfg.mode == "all-train":
+        script = Path(str(results["verl_command_file"]))
+        run_verl_command_script(script)
+        results["verl_launched"] = True
+
+    if cfg.mode == "train-latest":
+        script = find_latest_verl_command(cfg.result_dir, cfg.command_file)
+        results["verl_command_file"] = str(script)
+        run_verl_command_script(script)
+        results["verl_launched"] = True
 
     return results
 

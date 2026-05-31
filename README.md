@@ -13,14 +13,40 @@ Single-file MVP for a stock search-agent RLVR experiment with Tushare data and v
 ## Quick Start
 
 ```bash
-export TUSHARE_TOKEN="your_token"
+cp local_config.example.py local_config.py
+```
 
-export HF_ENDPOINT=https://hf-mirror.com
-huggingface-cli download Qwen/Qwen3-4B --local-dir model/Qwen3-4B
+Open `local_config.py` and paste your Tushare token.
 
+Download Qwen3-4B into `model/`:
+
+```bash
+pip install -U modelscope
+modelscope download --model Qwen/Qwen3-4B --local_dir model/Qwen3-4B
+```
+
+Run the whole MVP and start verl training:
+
+```bash
+python3 stock_agent_rl_mvp.py --mode all-train
+```
+
+If you only want to build data and generate the training script:
+
+```bash
 python3 stock_agent_rl_mvp.py --mode all
-LATEST_RUN=$(ls -td result/*_result | head -1)
-bash "$LATEST_RUN/run_verl_stock_grpo.sh"
+```
+
+If training was interrupted and you want to run the latest generated training script:
+
+```bash
+python3 stock_agent_rl_mvp.py --mode train-latest
+```
+
+You can also pass the Tushare token directly without editing `local_config.py`:
+
+```bash
+python3 stock_agent_rl_mvp.py --mode all-train --tushare-token "your_token"
 ```
 
 For the custom Tushare endpoint, the script sets:
