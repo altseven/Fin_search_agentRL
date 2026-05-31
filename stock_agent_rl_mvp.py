@@ -110,6 +110,8 @@ class MVPConfig:
     lora_alpha: int = 32
     rollout_tp: int = 2
     rollout_gpu_memory_utilization: float = 0.45
+    attn_implementation: str = "sdpa"
+    use_remove_padding: bool = False
     command_file: str = "run_verl_stock_grpo.sh"
     auto_download_model: bool = True
 
@@ -1243,7 +1245,8 @@ python3 -m verl.trainer.main_ppo \\
   data.truncation=error \\
   data.return_raw_chat=True \\
   actor_rollout_ref.model.path="{model_path}" \\
-  actor_rollout_ref.model.use_remove_padding=True \\
+  +actor_rollout_ref.model.override_config.attn_implementation={cfg.attn_implementation} \\
+  actor_rollout_ref.model.use_remove_padding={str(cfg.use_remove_padding).lower()} \\
   actor_rollout_ref.model.enable_gradient_checkpointing=True \\
   actor_rollout_ref.model.lora_rank={cfg.lora_rank} \\
   actor_rollout_ref.model.lora_alpha={cfg.lora_alpha} \\
@@ -1377,10 +1380,18 @@ def parse_args(argv: list[str] | None = None) -> MVPConfig:
     p.add_argument("--lora-alpha", type=int, default=32)
     p.add_argument("--rollout-tp", type=int, default=2)
     p.add_argument("--rollout-gpu-memory-utilization", type=float, default=0.45)
+    p.add_argument(
+        "--attn-implementation",
+        default="sdpa",
+        choices=["sdpa", "flash_attention_2", "eager"],
+        help="HF attention backend. sdpa avoids the flash-attn package and is easiest on 3090 boxes.",
+    )
+    p.add_argument("--use-remove-padding", dest="use_remove_padding", action="store_true")
+    p.add_argument("--no-use-remove-padding", dest="use_remove_padding", action="store_false")
     p.add_argument("--command-file", default="run_verl_stock_grpo.sh")
     p.add_argument("--no-auto-download-model", dest="auto_download_model", action="store_false")
     p.add_argument("--no-write-verl-command", dest="write_verl_command", action="store_false")
-    p.set_defaults(write_verl_command=True, auto_download_model=True)
+    p.set_defaults(write_verl_command=True, auto_download_model=True, use_remove_padding=False)
     args = p.parse_args(argv)
     return MVPConfig(**vars(args))
 
@@ -1423,6 +1434,8 @@ def main(
     lora_alpha: int = 32,
     rollout_tp: int = 2,
     rollout_gpu_memory_utilization: float = 0.45,
+    attn_implementation: str = "sdpa",
+    use_remove_padding: bool = False,
     command_file: str = "run_verl_stock_grpo.sh",
     auto_download_model: bool = True,
 ) -> dict[str, Any]:
@@ -1464,6 +1477,8 @@ def main(
         lora_alpha=lora_alpha,
         rollout_tp=rollout_tp,
         rollout_gpu_memory_utilization=rollout_gpu_memory_utilization,
+        attn_implementation=attn_implementation,
+        use_remove_padding=use_remove_padding,
         command_file=command_file,
         auto_download_model=auto_download_model,
     )
