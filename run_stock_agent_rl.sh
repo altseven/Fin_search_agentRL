@@ -37,8 +37,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
 LOG_FILE="$REPO_ROOT/output.log"
-: > "$LOG_FILE"
-exec > >(tee -a "$LOG_FILE") 2>&1
+if [[ -z "${STOCK_AGENT_LOGGING_STARTED:-}" ]]; then
+  : > "$LOG_FILE"
+  export STOCK_AGENT_LOGGING_STARTED=1
+  bash "$0" "$@" 2>&1 | tee -a "$LOG_FILE"
+  exit "${PIPESTATUS[0]}"
+fi
 echo "== Logging to $LOG_FILE =="
 
 ENV_NAME="${ENV_NAME:-stockverl}"
@@ -347,11 +351,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi
 fi
 
-if command -v ray >/dev/null 2>&1; then
-  ray stop --force || true
-else
-  "$PYTHON_CMD" -m ray.scripts.scripts stop --force || true
-fi
+"$PYTHON_CMD" -m ray.scripts.scripts stop --force || true
 
 "$PYTHON_CMD" stock_agent_rl_mvp.py \
   --mode all-train \
