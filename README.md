@@ -35,6 +35,7 @@ cd /kunlun_data/temp_ag_rl/Fin_search_agentRL
 bash -lc '
 set -e
 cd /kunlun_data/temp_ag_rl/Fin_search_agentRL
+git pull origin master
 bash run_stock_agent_rl.sh "your_token"
 '
 ```
@@ -86,7 +87,7 @@ bash setup_stockverl_env.sh --cn-mirror --download-model
 bash run_3090_small.sh "your_token"
 ```
 
-这个脚本默认下载 `Qwen/Qwen3-0.6B` 到 `model/Qwen3-0.6B`，然后调用同一套 full-flow 代码，只是使用单卡 debug 配置、小 batch、较短 prompt/response、较少股票和任务数。它仍然会跑数据构造、工具调用、rule baseline、verl GRPO 训练和 reward 评估链路；目标是先跑通和看到 reward 动起来，不是正式效果实验。
+这个脚本默认下载 `Qwen/Qwen3-0.6B` 到 `model/Qwen3-0.6B`，然后调用同一套 full-flow 代码，只是使用单卡 debug 配置、小 batch、较短 prompt/response、较少股票和任务数，并默认加 `--no-fetch-fundamentals` 跳过基本面抓取，避免 Tushare 财务公告日期脏数据打断 smoke test。它仍然会跑数据构造、工具调用、rule baseline、verl GRPO 训练和 reward 评估链路；目标是先跑通和看到 reward 动起来，不是正式效果实验。
 
 完整输出会写到 `output_3090_small.log`，训练入口自己的输出也会继续写到 `output.log`。
 
@@ -123,6 +124,16 @@ bash setup_stockverl_env.sh --env-mode system --diagnose-only
 ```
 
 CUDA 13.0 driver 下脚本默认安装 PyTorch `cu128` wheel，这是正常的；NVIDIA driver 向下兼容 CUDA 12.8 runtime。
+
+8 卡 A800 正式 full-flow 训练入口就是：
+
+```bash
+cd /kunlun_data/temp_ag_rl/Fin_search_agentRL
+git pull origin master
+bash run_stock_agent_rl.sh "your_token"
+```
+
+这个入口默认使用 `Qwen/Qwen3-4B`、8 卡 A800 profile、全参数 GRPO，并保留基本面工具。基本面数据里的空 `ann_date` 会被自动过滤，不需要额外加 `--no-fetch-fundamentals`。
 
 Advanced direct Python entry:
 

@@ -208,6 +208,7 @@ bash run_stock_agent_rl.sh "${RUN_ARGS[@]}" -- \
   --max-stocks "$MAX_STOCKS" \
   --max-tasks "$MAX_TASKS" \
   --sample-stride "$SAMPLE_STRIDE" \
+  --no-fetch-fundamentals \
   --train-batch-size 4 \
   --ppo-mini-batch-size 4 \
   --ppo-micro-batch-size-per-gpu 1 \

@@ -536,28 +536,48 @@ def build_fundamental_snapshot(
                     ]
                     if c in fina_all.columns
                 ]
-                fina_all = fina_all[keep].sort_values(["ts_code", "ann_date"])
-                out["_as_of_int"] = out["as_of_date"].astype(str).str.replace(r"[^0-9]", "", regex=True).astype(int)
-                fina_all["_ann_int"] = fina_all["ann_date"].astype(str).str.replace(r"[^0-9]", "", regex=True).astype(int)
-                merged = pd.merge_asof(
-                    out.sort_values("_as_of_int"),
-                    fina_all.sort_values("_ann_int"),
-                    left_on="_as_of_int",
-                    right_on="_ann_int",
-                    by="ts_code",
-                    direction="backward",
+                fina_all = fina_all[keep].sort_values(["ts_code", "ann_date"]).copy()
+                fina_all["_ann_int"] = pd.to_numeric(
+                    fina_all["ann_date"].astype(str).str.replace(r"[^0-9]", "", regex=True),
+                    errors="coerce",
                 )
-                for col in ["revenue_yoy", "net_profit_yoy", "gross_margin", "roe", "debt_ratio"]:
-                    if f"{col}_y" in merged.columns:
-                        merged[col] = merged[f"{col}_y"].combine_first(merged.get(f"{col}_x"))
-                    elif col not in merged.columns:
-                        merged[col] = float("nan")
-                if "end_date" in merged.columns:
-                    merged["report_period"] = merged["end_date"].fillna("")
-                if "ann_date" in merged.columns:
-                    merged["publish_time"] = merged["ann_date"].fillna(merged["as_of_date"]).map(_date_to_iso)
-                out = merged[[c for c in merged.columns if not c.endswith("_x") and not c.endswith("_y")]].copy()
-                out = out.drop(columns=[c for c in ["_as_of_int", "_ann_int"] if c in out.columns])
+                invalid_ann_dates = int(fina_all["_ann_int"].isna().sum())
+                if invalid_ann_dates:
+                    log(f"Skipped fundamental rows with invalid ann_date: rows={invalid_ann_dates}")
+                fina_all = fina_all.dropna(subset=["_ann_int"]).copy()
+
+                if not fina_all.empty:
+                    out["_as_of_int"] = pd.to_numeric(
+                        out["as_of_date"].astype(str).str.replace(r"[^0-9]", "", regex=True),
+                        errors="coerce",
+                    )
+                    invalid_as_of = int(out["_as_of_int"].isna().sum())
+                    if invalid_as_of:
+                        log(f"Skipped fundamental merge for rows with invalid as_of_date: rows={invalid_as_of}")
+                    merge_base = out.dropna(subset=["_as_of_int"]).copy()
+
+                    if not merge_base.empty:
+                        merge_base["_as_of_int"] = merge_base["_as_of_int"].astype("int64")
+                        fina_all["_ann_int"] = fina_all["_ann_int"].astype("int64")
+                        merged = pd.merge_asof(
+                            merge_base.sort_values("_as_of_int"),
+                            fina_all.sort_values("_ann_int"),
+                            left_on="_as_of_int",
+                            right_on="_ann_int",
+                            by="ts_code",
+                            direction="backward",
+                        )
+                        for col in ["revenue_yoy", "net_profit_yoy", "gross_margin", "roe", "debt_ratio"]:
+                            if f"{col}_y" in merged.columns:
+                                merged[col] = merged[f"{col}_y"].combine_first(merged.get(f"{col}_x"))
+                            elif col not in merged.columns:
+                                merged[col] = float("nan")
+                        if "end_date" in merged.columns:
+                            merged["report_period"] = merged["end_date"].fillna("")
+                        if "ann_date" in merged.columns:
+                            merged["publish_time"] = merged["ann_date"].fillna(merged["as_of_date"]).map(_date_to_iso)
+                        out = merged[[c for c in merged.columns if not c.endswith("_x") and not c.endswith("_y")]].copy()
+                        out = out.drop(columns=[c for c in ["_as_of_int", "_ann_int"] if c in out.columns])
 
     save_table(out, dirs["processed"] / "fundamental_snapshot")
     log(f"Fundamental snapshot built: rows={len(out)}")
