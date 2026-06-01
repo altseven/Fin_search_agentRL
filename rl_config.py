@@ -52,6 +52,8 @@ class MVPConfig:
     lora_alpha: int = 32
     rollout_tp: int = 2
     rollout_gpu_memory_utilization: float = 0.45
+    rollout_max_model_len: int | None = None
+    rollout_max_num_batched_tokens: int | None = None
     attn_implementation: str = "sdpa"
     use_remove_padding: bool = False
     command_file: str = "run_verl_stock_grpo.sh"

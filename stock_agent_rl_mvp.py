@@ -110,6 +110,8 @@ def parse_args(argv: list[str] | None = None) -> MVPConfig:
     p.add_argument("--lora-alpha", type=int, default=32)
     p.add_argument("--rollout-tp", type=int, default=2)
     p.add_argument("--rollout-gpu-memory-utilization", type=float, default=0.45)
+    p.add_argument("--rollout-max-model-len", type=int, default=None)
+    p.add_argument("--rollout-max-num-batched-tokens", type=int, default=None)
     p.add_argument(
         "--attn-implementation",
         default="sdpa",
@@ -164,6 +166,8 @@ def main(
     lora_alpha: int = 32,
     rollout_tp: int = 2,
     rollout_gpu_memory_utilization: float = 0.45,
+    rollout_max_model_len: int | None = None,
+    rollout_max_num_batched_tokens: int | None = None,
     attn_implementation: str = "sdpa",
     use_remove_padding: bool = False,
     command_file: str = "run_verl_stock_grpo.sh",
@@ -207,6 +211,8 @@ def main(
         lora_alpha=lora_alpha,
         rollout_tp=rollout_tp,
         rollout_gpu_memory_utilization=rollout_gpu_memory_utilization,
+        rollout_max_model_len=rollout_max_model_len,
+        rollout_max_num_batched_tokens=rollout_max_num_batched_tokens,
         attn_implementation=attn_implementation,
         use_remove_padding=use_remove_padding,
         command_file=command_file,

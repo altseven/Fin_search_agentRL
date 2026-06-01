@@ -73,6 +73,8 @@ def make_verl_command(cfg: MVPConfig, train_path: Path, valid_path: Path) -> str
     repo = Path(cfg.verl_dir).expanduser().resolve()
     data_root = Path(cfg.data_dir).expanduser().resolve()
     model_path = resolve_model_path_for_command(cfg.model_path)
+    rollout_max_model_len = cfg.rollout_max_model_len or (int(cfg.max_prompt_length) + int(cfg.max_response_length))
+    rollout_max_num_batched_tokens = cfg.rollout_max_num_batched_tokens or max(2048, rollout_max_model_len)
     command = f"""#!/usr/bin/env bash
 set -xeuo pipefail
 
@@ -116,6 +118,8 @@ python3 -m verl.trainer.main_ppo \\
   actor_rollout_ref.rollout.name=vllm \\
   actor_rollout_ref.rollout.tensor_model_parallel_size={cfg.rollout_tp} \\
   actor_rollout_ref.rollout.gpu_memory_utilization={cfg.rollout_gpu_memory_utilization} \\
+  actor_rollout_ref.rollout.max_model_len={rollout_max_model_len} \\
+  actor_rollout_ref.rollout.max_num_batched_tokens={rollout_max_num_batched_tokens} \\
   actor_rollout_ref.rollout.n={cfg.rollout_n} \\
   actor_rollout_ref.rollout.load_format=safetensors \\
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu={cfg.log_prob_micro_batch_size_per_gpu} \\
