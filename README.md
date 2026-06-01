@@ -78,6 +78,30 @@ If you only want to set up the environment without training:
 bash setup_stockverl_env.sh --cn-mirror --download-model
 ```
 
+## Single RTX 3090 Smoke Test
+
+如果你只想在自己的单卡 3090 服务器上跑通 full flow，可以用小模型入口：
+
+```bash
+bash run_3090_small.sh "your_token"
+```
+
+这个脚本默认下载 `Qwen/Qwen3-0.6B` 到 `model/Qwen3-0.6B`，然后调用同一套 full-flow 代码，只是使用单卡 debug 配置、小 batch、较短 prompt/response、较少股票和任务数。它仍然会跑数据构造、工具调用、rule baseline、verl GRPO 训练和 reward 评估链路；目标是先跑通和看到 reward 动起来，不是正式效果实验。
+
+完整输出会写到 `output_3090_small.log`，训练入口自己的输出也会继续写到 `output.log`。
+
+如果 3090 显存余量还可以，想试稍大一点的小模型：
+
+```bash
+MODEL_ID=Qwen/Qwen3-1.7B MODEL_DIR=model/Qwen3-1.7B bash run_3090_small.sh "your_token"
+```
+
+如果环境和模型已经装好：
+
+```bash
+bash run_3090_small.sh "your_token" --no-setup --no-download-model
+```
+
 `--cn-mirror` prefers China-side mirrors first and falls back automatically:
 
 - pip packages: Tsinghua PyPI -> Aliyun PyPI -> official PyPI

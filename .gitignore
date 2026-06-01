@@ -30,3 +30,4 @@ run_verl_stock_grpo.sh
 
 # Latest cloud/server run log. Regenerated and overwritten by run_stock_agent_rl.sh.
 output.log
+output_*.log
