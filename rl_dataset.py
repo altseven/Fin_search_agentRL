@@ -9,6 +9,46 @@ from rl_common import DATA_SOURCE, ensure_dirs, log, pd, read_table, require_pan
 from rl_config import MVPConfig
 
 
+DEFAULT_TOOL_NAMES = [
+    "get_price_factors",
+    "get_market_context",
+    "get_industry_context",
+    "get_peer_context",
+    "get_fundamental_snapshot",
+    "search_announcements",
+    "search_news",
+]
+
+
+def normalize_tool_selection(value: Any) -> list[str]:
+    if value is None:
+        return list(DEFAULT_TOOL_NAMES)
+    try:
+        if pd.isna(value):
+            return list(DEFAULT_TOOL_NAMES)
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return list(DEFAULT_TOOL_NAMES)
+        try:
+            loaded = json.loads(stripped)
+            return normalize_tool_selection(loaded)
+        except json.JSONDecodeError:
+            return [stripped]
+
+    if isinstance(value, (list, tuple, set)):
+        tools = [str(item).strip() for item in value if str(item).strip()]
+        return tools or list(DEFAULT_TOOL_NAMES)
+
+    if hasattr(value, "tolist"):
+        return normalize_tool_selection(value.tolist())
+
+    return list(DEFAULT_TOOL_NAMES)
+
+
 def make_prompt(row: dict[str, Any]) -> list[dict[str, str]]:
     system = (
         "You are a financial search prediction agent. Your task is to predict the "
@@ -20,15 +60,7 @@ def make_prompt(row: dict[str, Any]) -> list[dict[str, str]]:
         "p_neutral, p_down, alpha_score, confidence, evidence_summary, risk_factors, "
         "and search_steps_used."
     )
-    tools = row.get("tools") or [
-        "get_price_factors",
-        "get_market_context",
-        "get_industry_context",
-        "get_peer_context",
-        "get_fundamental_snapshot",
-        "search_announcements",
-        "search_news",
-    ]
+    tools = normalize_tool_selection(row.get("tools"))
     tool_lines = "\n".join(f"- {name}" for name in tools)
     user = (
         f"Predict the relative return direction for stock {row.get('ts_code')} "
@@ -73,15 +105,7 @@ def export_verl_dataset(cfg: MVPConfig) -> tuple[Path, Path]:
             "label": item["label"],
             "future_relative_return": float(item["future_relative_return"]),
         }
-        tools = item.get("tools") or [
-            "get_price_factors",
-            "get_market_context",
-            "get_industry_context",
-            "get_peer_context",
-            "get_fundamental_snapshot",
-            "search_announcements",
-            "search_news",
-        ]
+        tools = normalize_tool_selection(item.get("tools"))
         rows.append(
             {
                 "uid": str(item["sample_id"]),
