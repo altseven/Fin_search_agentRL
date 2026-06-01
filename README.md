@@ -12,34 +12,18 @@ Single-file MVP for a stock search-agent RLVR experiment with Tushare data and v
 
 ## Quick Start
 
-On a new GPU server, first create the Python/verl environment:
+Clone 到新 GPU 服务器后，直接执行统一入口：
 
 ```bash
-bash setup_stockverl_env.sh
+bash run_stock_agent_rl.sh "your_token"
 ```
 
-If normal PyPI is slow, use the China mirror for regular packages:
+它会自动创建/复用 `stockverl` conda 环境、安装依赖、下载模型、检测 GPU 数量和显存，然后启动训练。
+
+如果已经装好环境和模型，只想直接跑训练：
 
 ```bash
-bash setup_stockverl_env.sh --cn-mirror
-```
-
-Optional model download during setup:
-
-```bash
-bash setup_stockverl_env.sh --cn-mirror --download-model
-```
-
-For a one-card A100 LoRA run, use the wrapper script:
-
-```bash
-bash run_a100_1gpu.sh "your_token"
-```
-
-Clone 后最省事的一条命令如下，不需要 `export`，不需要自己找最新 result 目录，模型也会自动下载到 `model/Qwen3-4B`：
-
-```bash
-python3 stock_agent_rl_mvp.py --mode all-train --tushare-token "your_token"
+bash run_stock_agent_rl.sh "your_token" --no-setup
 ```
 
 如果不想每次在命令里传 token，可以用本地配置文件：
@@ -51,7 +35,19 @@ cp local_config.example.py local_config.py
 Open `local_config.py` and paste your Tushare token. Then run:
 
 ```bash
-python3 stock_agent_rl_mvp.py --mode all-train
+bash run_stock_agent_rl.sh
+```
+
+If you only want to set up the environment without training:
+
+```bash
+bash setup_stockverl_env.sh --cn-mirror --download-model
+```
+
+Advanced direct Python entry:
+
+```bash
+python3 stock_agent_rl_mvp.py --mode all-train --tushare-token "your_token"
 ```
 
 If you only want to build data and generate the training script:
