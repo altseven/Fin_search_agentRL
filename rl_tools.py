@@ -61,7 +61,13 @@ def _date_to_yyyymmdd(s: str) -> str:
 
 @function_tool
 def get_price_factors(ts_code: str, as_of_date: str, lookback_days: int = 20) -> dict:
-    """Get point-in-time price and factor summary for one A-share stock."""
+    """Get point-in-time price and factor summary for one A-share stock.
+
+    Args:
+        ts_code: Stock code such as "600519.SH".
+        as_of_date: Prediction date in YYYYMMDD or YYYY-MM-DD format.
+        lookback_days: Lookback window length; currently used as metadata only.
+    """
     try:
         code = normalize_ts_code(ts_code)
         date = _date_to_yyyymmdd(as_of_date)
@@ -118,7 +124,12 @@ def get_price_factors(ts_code: str, as_of_date: str, lookback_days: int = 20) ->
 
 @function_tool
 def get_market_context(as_of_date: str, index_code: str = DEFAULT_MARKET_INDEX) -> dict:
-    """Get point-in-time market index context."""
+    """Get point-in-time market index context.
+
+    Args:
+        as_of_date: Prediction date in YYYYMMDD or YYYY-MM-DD format.
+        index_code: Market index code. The default is SSE50 "000016.SH".
+    """
     try:
         date = _date_to_yyyymmdd(as_of_date)
         df = _load_tool_table("market_context")
@@ -159,7 +170,14 @@ def get_market_context(as_of_date: str, index_code: str = DEFAULT_MARKET_INDEX) 
 
 @function_tool
 def search_announcements(ts_code: str, as_of_date: str, query: str = "", top_k: int = 3) -> dict:
-    """Search point-in-time announcements if an announcement table is available."""
+    """Search point-in-time announcements if an announcement table is available.
+
+    Args:
+        ts_code: Stock code such as "600519.SH".
+        as_of_date: Prediction date in YYYYMMDD or YYYY-MM-DD format.
+        query: Keyword query for title or summary.
+        top_k: Maximum number of announcement rows to return.
+    """
     try:
         code = normalize_ts_code(ts_code)
         date = _date_to_yyyymmdd(as_of_date)
