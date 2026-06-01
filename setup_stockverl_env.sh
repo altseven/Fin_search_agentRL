@@ -24,9 +24,9 @@ Options:
                               PyTorch wheel index flavor. Default: cu128
   --torch-version VERSION     Torch version. Default: 2.9.0
   --requirements PATH         Locked requirements file. Default: requirements-stockverl.txt
-  --cn-mirror                 Use Tsinghua PyPI mirror for normal pip packages
+  --cn-mirror                 Prefer China mirrors for pip/Torch/model downloads, then fall back to official sources
   --install-flash-attn        Try to install flash-attn. Not needed for current sdpa default
-  --download-model            Download Qwen/Qwen3-4B to model/Qwen3-4B via ModelScope
+  --download-model            Download Qwen/Qwen3-4B to model/Qwen3-4B
   --model-id ID               ModelScope model id. Default: Qwen/Qwen3-4B
   --model-dir DIR             Local model dir. Default: model/Qwen3-4B
   -h, --help                  Show this help
@@ -159,6 +159,18 @@ echo "Use CN mirror: $USE_CN_MIRROR"
 echo "Install flash-attn: $INSTALL_FLASH_ATTN"
 echo
 
+CACHE_ROOT="${CACHE_ROOT:-$REPO_ROOT/.cache}"
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$CACHE_ROOT/pip}"
+export HF_HOME="${HF_HOME:-$CACHE_ROOT/huggingface}"
+export MODELSCOPE_CACHE="${MODELSCOPE_CACHE:-$CACHE_ROOT/modelscope}"
+export PIP_DISABLE_PIP_VERSION_CHECK="${PIP_DISABLE_PIP_VERSION_CHECK:-1}"
+mkdir -p "$PIP_CACHE_DIR" "$HF_HOME" "$MODELSCOPE_CACHE"
+echo "Cache root: $CACHE_ROOT"
+echo "Pip cache: $PIP_CACHE_DIR"
+echo "HF_HOME: $HF_HOME"
+echo "MODELSCOPE_CACHE: $MODELSCOPE_CACHE"
+echo
+
 echo "== Machine summary =="
 uname -a || true
 df -h "$REPO_ROOT" || true
@@ -247,18 +259,85 @@ echo "Python executable: $("$PYTHON_CMD" -c 'import sys; print(sys.executable)')
 "$PYTHON_CMD" --version
 "$PYTHON_CMD" -m pip --version >/dev/null 2>&1 || "$PYTHON_CMD" -m ensurepip --upgrade || true
 
-PIP_ARGS=()
-if [[ "$USE_CN_MIRROR" == "1" ]]; then
-  PIP_ARGS=(-i "https://pypi.tuna.tsinghua.edu.cn/simple" --trusted-host "pypi.tuna.tsinghua.edu.cn")
-fi
-
 PIP_BREAK_ARGS=()
 if [[ "$USE_CONDA" == "0" ]] && "$PYTHON_CMD" -m pip install --help 2>/dev/null | grep -q -- "--break-system-packages"; then
   PIP_BREAK_ARGS=(--break-system-packages)
 fi
 
+PIP_COMMON_ARGS=(--timeout "${PIP_TIMEOUT:-30}" --retries "${PIP_RETRIES:-3}" --prefer-binary)
+
 pip_install() {
-  "$PYTHON_CMD" -m pip install "${PIP_ARGS[@]}" "${PIP_BREAK_ARGS[@]}" "$@"
+  if [[ "$USE_CN_MIRROR" != "1" ]]; then
+    "$PYTHON_CMD" -m pip install "${PIP_COMMON_ARGS[@]}" "${PIP_BREAK_ARGS[@]}" "$@"
+    return
+  fi
+
+  local source_name
+  local rc=1
+  for source_name in "Tsinghua PyPI" "Aliyun PyPI" "Official PyPI"; do
+    local source_args=()
+    case "$source_name" in
+      "Tsinghua PyPI")
+        source_args=(-i "https://pypi.tuna.tsinghua.edu.cn/simple" --trusted-host "pypi.tuna.tsinghua.edu.cn")
+        ;;
+      "Aliyun PyPI")
+        source_args=(-i "https://mirrors.aliyun.com/pypi/simple" --trusted-host "mirrors.aliyun.com")
+        ;;
+      "Official PyPI")
+        source_args=(-i "https://pypi.org/simple")
+        ;;
+    esac
+
+    echo "pip source: $source_name"
+    if "$PYTHON_CMD" -m pip install "${PIP_COMMON_ARGS[@]}" "${source_args[@]}" "${PIP_BREAK_ARGS[@]}" "$@"; then
+      return 0
+    fi
+    rc=$?
+    echo "WARNING: pip install failed via $source_name, trying next source..." >&2
+  done
+  return "$rc"
+}
+
+pip_install_torch() {
+  local torch_cuda="$1"
+  shift
+  local source_name
+  local rc=1
+  local official_url
+
+  if [[ "$torch_cuda" == "cpu" ]]; then
+    official_url="https://download.pytorch.org/whl/cpu"
+  else
+    official_url="https://download.pytorch.org/whl/$torch_cuda"
+  fi
+
+  if [[ "$USE_CN_MIRROR" != "1" ]]; then
+    "$PYTHON_CMD" -m pip install "${PIP_COMMON_ARGS[@]}" "${PIP_BREAK_ARGS[@]}" --index-url "$official_url" "$@"
+    return
+  fi
+
+  for source_name in "Tsinghua PyTorch" "Aliyun PyTorch" "Official PyTorch"; do
+    local torch_index_url
+    case "$source_name" in
+      "Tsinghua PyTorch")
+        torch_index_url="https://mirrors.tuna.tsinghua.edu.cn/pytorch-wheels/$torch_cuda"
+        ;;
+      "Aliyun PyTorch")
+        torch_index_url="https://mirrors.aliyun.com/pytorch-wheels/$torch_cuda"
+        ;;
+      "Official PyTorch")
+        torch_index_url="$official_url"
+        ;;
+    esac
+
+    echo "torch source: $source_name ($torch_index_url)"
+    if "$PYTHON_CMD" -m pip install "${PIP_COMMON_ARGS[@]}" "${PIP_BREAK_ARGS[@]}" --index-url "$torch_index_url" "$@"; then
+      return 0
+    fi
+    rc=$?
+    echo "WARNING: PyTorch install failed via $source_name, trying next source..." >&2
+  done
+  return "$rc"
 }
 
 echo "== Upgrading packaging tools =="
@@ -297,16 +376,10 @@ fi
 
 if [[ "$INSTALL_TORCH" == "yes" || ( "$INSTALL_TORCH" == "auto" && "$torch_import_ok" == "0" ) ]]; then
   echo "== Installing PyTorch ($TORCH_CUDA) =="
-  if [[ "$TORCH_CUDA" == "cpu" ]]; then
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
-  else
-    TORCH_INDEX_URL="https://download.pytorch.org/whl/$TORCH_CUDA"
-  fi
-  "$PYTHON_CMD" -m pip install "${PIP_BREAK_ARGS[@]}" \
+  pip_install_torch "$TORCH_CUDA" \
     "torch==$TORCH_VERSION" \
     "torchvision==$TORCHVISION_VERSION" \
-    "torchaudio==$TORCHAUDIO_VERSION" \
-    --index-url "$TORCH_INDEX_URL"
+    "torchaudio==$TORCHAUDIO_VERSION"
 elif [[ "$INSTALL_TORCH" == "no" ]]; then
   echo "== Skipping PyTorch install by request =="
 else
@@ -368,16 +441,55 @@ else
 fi
 
 if [[ "$DOWNLOAD_MODEL" == "1" ]]; then
-  echo "== Downloading model via ModelScope =="
+  echo "== Downloading model =="
   mkdir -p "$(dirname "$MODEL_DIR")"
   if [[ -d "$MODEL_DIR" && -n "$(find "$MODEL_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]]; then
     echo "Model directory already exists and is non-empty: $MODEL_DIR"
   else
-    MODEL_ID="$MODEL_ID" MODEL_DIR="$MODEL_DIR" "$PYTHON_CMD" - <<'PY'
+    MODEL_ID="$MODEL_ID" MODEL_DIR="$MODEL_DIR" USE_CN_MIRROR="$USE_CN_MIRROR" "$PYTHON_CMD" - <<'PY'
 import os
-from modelscope import snapshot_download
+import traceback
 
-snapshot_download(os.environ["MODEL_ID"], local_dir=os.environ["MODEL_DIR"])
+model_id = os.environ["MODEL_ID"]
+model_dir = os.environ["MODEL_DIR"]
+use_cn_mirror = os.environ.get("USE_CN_MIRROR") == "1"
+
+
+def download_modelscope():
+    from modelscope import snapshot_download
+
+    snapshot_download(model_id, local_dir=model_dir)
+
+
+def download_hf(endpoint=None):
+    if endpoint:
+        os.environ["HF_ENDPOINT"] = endpoint
+    else:
+        os.environ.pop("HF_ENDPOINT", None)
+
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(repo_id=model_id, local_dir=model_dir)
+
+
+attempts = [("ModelScope", download_modelscope)]
+if use_cn_mirror:
+    attempts.append(("HuggingFace mirror hf-mirror.com", lambda: download_hf("https://hf-mirror.com")))
+attempts.append(("Official HuggingFace", lambda: download_hf(None)))
+
+errors = []
+for name, fn in attempts:
+    print(f"model source: {name}")
+    try:
+        fn()
+        print(f"model download succeeded via {name}")
+        break
+    except Exception as exc:
+        errors.append(f"{name}: {exc}")
+        traceback.print_exc()
+        print(f"WARNING: model download failed via {name}, trying next source...")
+else:
+    raise SystemExit("All model download sources failed:\n" + "\n".join(errors))
 PY
   fi
 fi

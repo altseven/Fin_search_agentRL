@@ -78,6 +78,14 @@ If you only want to set up the environment without training:
 bash setup_stockverl_env.sh --cn-mirror --download-model
 ```
 
+`--cn-mirror` prefers China-side mirrors first and falls back automatically:
+
+- pip packages: Tsinghua PyPI -> Aliyun PyPI -> official PyPI
+- PyTorch wheels: Tsinghua PyTorch wheels -> Aliyun PyTorch wheels -> official PyTorch wheels
+- model weights: ModelScope -> HuggingFace mirror -> official HuggingFace
+
+Downloaded wheels and hub caches are kept under `.cache/` by default, so repeated runs on the same persistent disk can reuse them.
+
 CUDA 13.0 driver 下脚本默认安装 PyTorch `cu128` wheel，这是正常的；NVIDIA driver 向下兼容 CUDA 12.8 runtime。
 
 Advanced direct Python entry:

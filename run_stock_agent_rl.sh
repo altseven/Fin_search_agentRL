@@ -21,7 +21,7 @@ Options:
   --requirements PATH   Locked requirements file. Default: requirements-stockverl.txt
   --profile PROFILE     auto|a800_8gpu|debug. Default: auto
   --no-setup            Skip environment setup and model download
-  --no-cn-mirror        Do not use the Tsinghua PyPI mirror during setup
+  --no-cn-mirror        Do not prefer China mirrors during setup
   --no-download-model   Do not download Qwen3-4B during setup
   -h, --help            Show this help
 
