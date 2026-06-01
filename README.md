@@ -1,10 +1,18 @@
 # Fin_search_agentRL
 
-Single-file MVP for a stock search-agent RLVR experiment with Tushare data and verl.
+MVP for a stock search-agent RLVR experiment with Tushare data and verl.
 
 ## Directory Layout
 
-- `stock_agent_rl_mvp.py`: all-in-one data builder, tool definitions, reward function, rule baseline, and verl command generator.
+- `stock_agent_rl_mvp.py`: CLI/main entrypoint.
+- `rl_common.py`: shared constants, local config, table cache helpers, and path helpers.
+- `rl_config.py`: runtime config dataclass.
+- `rl_data.py`: Tushare download, factor snapshots, task and label construction.
+- `rl_tools.py`: verl function-call tools for price factors, market context, and announcements.
+- `rl_reward.py`: standalone verl reward function file containing `compute_score`.
+- `rl_dataset.py`: prompt building and verl parquet export.
+- `rl_baseline.py`: local rule-agent baseline and metrics.
+- `rl_verl.py`: model download helpers and generated verl command.
 - `data/`: local downloaded market data cache. Ignored by git.
 - `model/`: local model weights, for example `model/Qwen3-4B`. Ignored by git.
 - `result/`: per-run outputs. Each run creates `HHMMSS_MMDD_result/`. Ignored by git except `.gitkeep`.
