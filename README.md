@@ -12,6 +12,24 @@ Single-file MVP for a stock search-agent RLVR experiment with Tushare data and v
 
 ## Quick Start
 
+On a new GPU server, first create the Python/verl environment:
+
+```bash
+bash setup_stockverl_env.sh
+```
+
+If normal PyPI is slow, use the China mirror for regular packages:
+
+```bash
+bash setup_stockverl_env.sh --cn-mirror
+```
+
+Optional model download during setup:
+
+```bash
+bash setup_stockverl_env.sh --cn-mirror --download-model
+```
+
 Clone 后最省事的一条命令如下，不需要 `export`，不需要自己找最新 result 目录，模型也会自动下载到 `model/Qwen3-4B`：
 
 ```bash
