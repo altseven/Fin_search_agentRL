@@ -141,7 +141,9 @@ if ! command -v conda >/dev/null 2>&1; then
     "/opt/conda/etc/profile.d/conda.sh"; do
     if [[ -f "$conda_sh" ]]; then
       # shellcheck disable=SC1090
+      set +u
       source "$conda_sh"
+      set -u
       break
     fi
   done
@@ -152,7 +154,9 @@ if ! command -v conda >/dev/null 2>&1; then
   exit 1
 fi
 
+set +u
 eval "$(conda shell.bash hook)"
+set -u
 
 if conda env list | awk '{print $1}' | grep -Fxq "$ENV_NAME"; then
   echo "== Using existing conda env: $ENV_NAME =="
@@ -161,7 +165,9 @@ else
   conda create -n "$ENV_NAME" "python=$PYTHON_VERSION" -y
 fi
 
+set +u
 conda activate "$ENV_NAME"
+set -u
 echo "Python executable: $(command -v python)"
 python --version
 

@@ -115,7 +115,9 @@ if ! command -v conda >/dev/null 2>&1; then
     "/opt/conda/etc/profile.d/conda.sh"; do
     if [[ -f "$conda_sh" ]]; then
       # shellcheck disable=SC1090
+      set +u
       source "$conda_sh"
+      set -u
       break
     fi
   done
@@ -126,8 +128,10 @@ if ! command -v conda >/dev/null 2>&1; then
   exit 1
 fi
 
+set +u
 eval "$(conda shell.bash hook)"
 conda activate "$ENV_NAME"
+set -u
 
 readarray -t PROFILE_LINES < <(PROFILE="$PROFILE" python - <<'PY'
 import os
