@@ -30,6 +30,12 @@ Optional model download during setup:
 bash setup_stockverl_env.sh --cn-mirror --download-model
 ```
 
+For a one-card A100 LoRA run, use the wrapper script:
+
+```bash
+bash run_a100_1gpu.sh "your_token"
+```
+
 Clone 后最省事的一条命令如下，不需要 `export`，不需要自己找最新 result 目录，模型也会自动下载到 `model/Qwen3-4B`：
 
 ```bash
