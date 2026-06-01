@@ -7,7 +7,7 @@ Usage:
   bash setup_stockverl_env.sh [options]
 
 Default behavior:
-  - create/use conda env: stockverl
+  - use conda env stockverl when conda exists; otherwise use the current Python
   - Python: 3.10
   - install PyTorch automatically if missing, default CUDA wheel: cu128
   - install this project's Python deps plus verl-main with vLLM support
@@ -15,8 +15,10 @@ Default behavior:
   - do not download model weights by default
 
 Options:
+  --env-mode MODE            auto|conda|system. Default: auto
   --env-name NAME             Conda env name. Default: stockverl
   --python VERSION            Python version. Default: 3.10
+  --python-bin PATH           Python executable for system mode. Default: python3.10/python3/python
   --install-torch auto|yes|no PyTorch install policy. Default: auto
   --torch-cuda cu121|cu124|cu126|cu128|cpu
                               PyTorch wheel index flavor. Default: cu128
@@ -36,7 +38,9 @@ EOF
 }
 
 ENV_NAME="${ENV_NAME:-stockverl}"
+ENV_MODE="${ENV_MODE:-auto}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 INSTALL_TORCH="${INSTALL_TORCH:-auto}"
 TORCH_CUDA="${TORCH_CUDA:-cu128}"
 USE_CN_MIRROR="${USE_CN_MIRROR:-0}"
@@ -47,8 +51,16 @@ MODEL_DIR="${MODEL_DIR:-model/Qwen3-4B}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --env-mode)
+      ENV_MODE="$2"
+      shift 2
+      ;;
     --env-name)
       ENV_NAME="$2"
+      shift 2
+      ;;
+    --python-bin)
+      PYTHON_BIN="$2"
       shift 2
       ;;
     --python)
@@ -103,6 +115,14 @@ case "$INSTALL_TORCH" in
     ;;
 esac
 
+case "$ENV_MODE" in
+  auto|conda|system) ;;
+  *)
+    echo "--env-mode must be one of: auto, conda, system" >&2
+    exit 2
+    ;;
+esac
+
 case "$TORCH_CUDA" in
   cu121|cu124|cu126|cu128|cpu) ;;
   *)
@@ -116,6 +136,7 @@ cd "$REPO_ROOT"
 
 echo "== Stock agent RL environment setup =="
 echo "Repo: $REPO_ROOT"
+echo "Env mode: $ENV_MODE"
 echo "Conda env: $ENV_NAME"
 echo "Python: $PYTHON_VERSION"
 echo "Install torch: $INSTALL_TORCH ($TORCH_CUDA)"
@@ -134,7 +155,10 @@ else
 fi
 echo
 
-if ! command -v conda >/dev/null 2>&1; then
+load_conda() {
+  if command -v conda >/dev/null 2>&1; then
+    return 0
+  fi
   for conda_sh in \
     "$HOME/miniconda3/etc/profile.d/conda.sh" \
     "$HOME/anaconda3/etc/profile.d/conda.sh" \
@@ -144,47 +168,89 @@ if ! command -v conda >/dev/null 2>&1; then
       set +u
       source "$conda_sh"
       set -u
-      break
+      return 0
     fi
   done
+  return 1
+}
+
+find_python_bin() {
+  if [[ -n "$PYTHON_BIN" ]]; then
+    if command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+      command -v "$PYTHON_BIN"
+      return 0
+    fi
+    if [[ -x "$PYTHON_BIN" ]]; then
+      echo "$PYTHON_BIN"
+      return 0
+    fi
+    echo "--python-bin not found or not executable: $PYTHON_BIN" >&2
+    return 1
+  fi
+  for py in "python$PYTHON_VERSION" python3 python; do
+    if command -v "$py" >/dev/null 2>&1; then
+      command -v "$py"
+      return 0
+    fi
+  done
+  echo "No usable Python found. Expected python$PYTHON_VERSION, python3, or python." >&2
+  return 1
+}
+
+USE_CONDA=0
+if [[ "$ENV_MODE" == "conda" || "$ENV_MODE" == "auto" ]]; then
+  if load_conda && command -v conda >/dev/null 2>&1; then
+    USE_CONDA=1
+  elif [[ "$ENV_MODE" == "conda" ]]; then
+    echo "conda not found, but --env-mode conda was requested." >&2
+    exit 1
+  fi
 fi
 
-if ! command -v conda >/dev/null 2>&1; then
-  echo "conda not found. Please install Miniconda/Anaconda first, then rerun this script." >&2
-  exit 1
-fi
+if [[ "$USE_CONDA" == "1" ]]; then
+  set +u
+  eval "$(conda shell.bash hook)"
+  set -u
 
-set +u
-eval "$(conda shell.bash hook)"
-set -u
+  if conda env list | awk '{print $1}' | grep -Fxq "$ENV_NAME"; then
+    echo "== Using existing conda env: $ENV_NAME =="
+  else
+    echo "== Creating conda env: $ENV_NAME =="
+    conda create -n "$ENV_NAME" "python=$PYTHON_VERSION" -y
+  fi
 
-if conda env list | awk '{print $1}' | grep -Fxq "$ENV_NAME"; then
-  echo "== Using existing conda env: $ENV_NAME =="
+  set +u
+  conda activate "$ENV_NAME"
+  set -u
+  PYTHON_CMD="python"
 else
-  echo "== Creating conda env: $ENV_NAME =="
-  conda create -n "$ENV_NAME" "python=$PYTHON_VERSION" -y
+  PYTHON_CMD="$(find_python_bin)"
+  echo "== Using system Python =="
 fi
 
-set +u
-conda activate "$ENV_NAME"
-set -u
-echo "Python executable: $(command -v python)"
-python --version
+echo "Python executable: $("$PYTHON_CMD" -c 'import sys; print(sys.executable)')"
+"$PYTHON_CMD" --version
+"$PYTHON_CMD" -m pip --version >/dev/null 2>&1 || "$PYTHON_CMD" -m ensurepip --upgrade || true
 
 PIP_ARGS=()
 if [[ "$USE_CN_MIRROR" == "1" ]]; then
   PIP_ARGS=(-i "https://pypi.tuna.tsinghua.edu.cn/simple" --trusted-host "pypi.tuna.tsinghua.edu.cn")
 fi
 
+PIP_BREAK_ARGS=()
+if [[ "$USE_CONDA" == "0" ]] && "$PYTHON_CMD" -m pip install --help 2>/dev/null | grep -q -- "--break-system-packages"; then
+  PIP_BREAK_ARGS=(--break-system-packages)
+fi
+
 pip_install() {
-  python -m pip install "${PIP_ARGS[@]}" "$@"
+  "$PYTHON_CMD" -m pip install "${PIP_ARGS[@]}" "${PIP_BREAK_ARGS[@]}" "$@"
 }
 
 echo "== Upgrading packaging tools =="
 pip_install -U pip setuptools wheel packaging ninja
 
 torch_import_ok=0
-if python - <<'PY'
+if "$PYTHON_CMD" - <<'PY'
 try:
     import torch
     print("torch already importable:", torch.__version__, "cuda:", torch.cuda.is_available())
@@ -202,7 +268,7 @@ if [[ "$INSTALL_TORCH" == "yes" || ( "$INSTALL_TORCH" == "auto" && "$torch_impor
   else
     TORCH_INDEX_URL="https://download.pytorch.org/whl/$TORCH_CUDA"
   fi
-  python -m pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
+  "$PYTHON_CMD" -m pip install "${PIP_BREAK_ARGS[@]}" torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
 elif [[ "$INSTALL_TORCH" == "no" ]]; then
   echo "== Skipping PyTorch install by request =="
 else
@@ -233,12 +299,17 @@ if [[ "$DOWNLOAD_MODEL" == "1" ]]; then
   if [[ -d "$MODEL_DIR" && -n "$(find "$MODEL_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]]; then
     echo "Model directory already exists and is non-empty: $MODEL_DIR"
   else
-    modelscope download --model "$MODEL_ID" --local_dir "$MODEL_DIR"
+    MODEL_ID="$MODEL_ID" MODEL_DIR="$MODEL_DIR" "$PYTHON_CMD" - <<'PY'
+import os
+from modelscope import snapshot_download
+
+snapshot_download(os.environ["MODEL_ID"], local_dir=os.environ["MODEL_DIR"])
+PY
   fi
 fi
 
 echo "== Import and GPU verification =="
-python - <<'PY'
+"$PYTHON_CMD" - <<'PY'
 import importlib
 
 mods = [
@@ -271,8 +342,12 @@ PY
 
 echo
 echo "== Done =="
-echo "Activate this environment with:"
-echo "  conda activate $ENV_NAME"
+if [[ "$USE_CONDA" == "1" ]]; then
+  echo "Activate this environment with:"
+  echo "  conda activate $ENV_NAME"
+else
+  echo "Using system Python; no conda activation is needed."
+fi
 echo
 echo "Typical next commands:"
 echo "  bash run_stock_agent_rl.sh \"YOUR_TOKEN\" --no-setup"

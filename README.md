@@ -20,22 +20,26 @@ MVP for a stock search-agent RLVR experiment with Tushare data and verl.
 
 ## Quick Start
 
-Clone 到 8 卡 A800 服务器后，建议放到你指定的目录：
+先手动把仓库 clone 到你指定的目录：
 
 ```bash
 mkdir -p /kunlun_data/temp_ag_rl
 cd /kunlun_data/temp_ag_rl
-git clone https://github.com/altseven/Fin_search_agentRL.git
+git clone https://gitee.com/fduseven/fin_search_agent-rl.git Fin_search_agentRL
 cd /kunlun_data/temp_ag_rl/Fin_search_agentRL
 ```
 
-然后直接执行统一入口：
+云平台任务的启动命令不需要写 clone，只需要进入已存在的项目目录并执行统一入口：
 
 ```bash
+bash -lc '
+set -e
+cd /kunlun_data/temp_ag_rl/Fin_search_agentRL
 bash run_stock_agent_rl.sh "your_token"
+'
 ```
 
-它会自动创建/复用 `stockverl` conda 环境、安装依赖、下载 `Qwen/Qwen3-4B`、检测 8 张 70GB+ GPU，然后启动全参数 GRPO 训练。默认 profile 是 8 卡 A800：`train_batch_size=64`、`rollout_n=4`、`rollout_tp=4`、`max_prompt_length=3072`、`max_response_length=1024`，LoRA 默认关闭。
+它会自动安装依赖、下载 `Qwen/Qwen3-4B`、检测 8 张 70GB+ GPU，然后启动全参数 GRPO 训练。脚本默认 `--env-mode auto`：如果镜像里有 conda 就复用/创建 `stockverl` 环境；如果没有 conda，就直接使用镜像自带的 `python3.10`/`python3` 安装依赖并运行。默认 profile 是 8 卡 A800：`train_batch_size=64`、`rollout_n=4`、`rollout_tp=4`、`max_prompt_length=3072`、`max_response_length=1024`，LoRA 默认关闭。
 
 统一入口会把所有 stdout/stderr 同步写到项目根目录的 `output.log`，每次运行都会覆盖旧日志。云服务器上任务结束后可以直接查看：
 
@@ -48,6 +52,12 @@ tail -n 200 output.log
 
 ```bash
 bash run_stock_agent_rl.sh "your_token" --no-setup
+```
+
+如果你明确不想使用 conda，可以加：
+
+```bash
+bash run_stock_agent_rl.sh "your_token" --env-mode system
 ```
 
 如果不想每次在命令里传 token，可以用本地配置文件：

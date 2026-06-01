@@ -15,7 +15,9 @@ Token alternatives:
     The last form requires local_config.py to contain tushare_token.
 
 Options:
+  --env-mode MODE      auto|conda|system. Default: auto
   --env-name NAME       Conda env name. Default: stockverl
+  --python-bin PATH     Python executable for system mode. Default: python3.10/python3/python
   --profile PROFILE     auto|a800_8gpu|debug. Default: auto
   --no-setup            Skip environment setup and model download
   --no-cn-mirror        Do not use the Tsinghua PyPI mirror during setup
@@ -39,6 +41,8 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 echo "== Logging to $LOG_FILE =="
 
 ENV_NAME="${ENV_NAME:-stockverl}"
+ENV_MODE="${ENV_MODE:-auto}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 PROFILE="auto"
 RUN_SETUP=1
 USE_CN_MIRROR=1
@@ -53,8 +57,16 @@ while [[ $# -gt 0 ]]; do
       usage
       exit 0
       ;;
+    --env-mode)
+      ENV_MODE="$2"
+      shift 2
+      ;;
     --env-name)
       ENV_NAME="$2"
+      shift 2
+      ;;
+    --python-bin)
+      PYTHON_BIN="$2"
       shift 2
       ;;
     --profile)
@@ -102,8 +114,19 @@ case "$PROFILE" in
     ;;
 esac
 
+case "$ENV_MODE" in
+  auto|conda|system) ;;
+  *)
+    echo "--env-mode must be one of: auto, conda, system" >&2
+    exit 2
+    ;;
+esac
+
 if [[ "$RUN_SETUP" == "1" ]]; then
-  SETUP_ARGS=(--env-name "$ENV_NAME" --torch-cuda cu128)
+  SETUP_ARGS=(--env-mode "$ENV_MODE" --env-name "$ENV_NAME" --torch-cuda cu128)
+  if [[ -n "$PYTHON_BIN" ]]; then
+    SETUP_ARGS+=(--python-bin "$PYTHON_BIN")
+  fi
   if [[ "$USE_CN_MIRROR" == "1" ]]; then
     SETUP_ARGS+=(--cn-mirror)
   fi
@@ -113,7 +136,10 @@ if [[ "$RUN_SETUP" == "1" ]]; then
   bash setup_stockverl_env.sh "${SETUP_ARGS[@]}"
 fi
 
-if ! command -v conda >/dev/null 2>&1; then
+load_conda() {
+  if command -v conda >/dev/null 2>&1; then
+    return 0
+  fi
   for conda_sh in \
     "$HOME/miniconda3/etc/profile.d/conda.sh" \
     "$HOME/anaconda3/etc/profile.d/conda.sh" \
@@ -123,22 +149,58 @@ if ! command -v conda >/dev/null 2>&1; then
       set +u
       source "$conda_sh"
       set -u
-      break
+      return 0
     fi
   done
+  return 1
+}
+
+find_python_bin() {
+  if [[ -n "$PYTHON_BIN" ]]; then
+    if command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+      command -v "$PYTHON_BIN"
+      return 0
+    fi
+    if [[ -x "$PYTHON_BIN" ]]; then
+      echo "$PYTHON_BIN"
+      return 0
+    fi
+    echo "--python-bin not found or not executable: $PYTHON_BIN" >&2
+    return 1
+  fi
+  for py in python3.10 python3 python; do
+    if command -v "$py" >/dev/null 2>&1; then
+      command -v "$py"
+      return 0
+    fi
+  done
+  echo "No usable Python found. Expected python3.10, python3, or python." >&2
+  return 1
+}
+
+USE_CONDA=0
+if [[ "$ENV_MODE" == "conda" || "$ENV_MODE" == "auto" ]]; then
+  if load_conda && command -v conda >/dev/null 2>&1; then
+    USE_CONDA=1
+  elif [[ "$ENV_MODE" == "conda" ]]; then
+    echo "conda not found, but --env-mode conda was requested." >&2
+    exit 1
+  fi
 fi
 
-if ! command -v conda >/dev/null 2>&1; then
-  echo "conda not found. Please install Miniconda/Anaconda or use a GPU image with conda." >&2
-  exit 1
+if [[ "$USE_CONDA" == "1" ]]; then
+  set +u
+  eval "$(conda shell.bash hook)"
+  conda activate "$ENV_NAME"
+  set -u
+  PYTHON_CMD="python"
+else
+  PYTHON_CMD="$(find_python_bin)"
 fi
 
-set +u
-eval "$(conda shell.bash hook)"
-conda activate "$ENV_NAME"
-set -u
+PYTHON_EXE="$("$PYTHON_CMD" -c 'import sys; print(sys.executable)')"
 
-readarray -t PROFILE_LINES < <(PROFILE="$PROFILE" python - <<'PY'
+readarray -t PROFILE_LINES < <(PROFILE="$PROFILE" "$PYTHON_CMD" - <<'PY'
 import os
 
 profile = os.environ["PROFILE"]
@@ -261,7 +323,12 @@ fi
 
 echo "== Stock agent RL training =="
 echo "Repo: $REPO_ROOT"
-echo "Env: $ENV_NAME"
+if [[ "$USE_CONDA" == "1" ]]; then
+  echo "Env: conda:$ENV_NAME"
+else
+  echo "Env: system-python"
+fi
+echo "Python: $PYTHON_EXE"
 echo "Selected profile: $PROFILE_NAME"
 echo "Detected GPUs: $GPU_COUNT, min memory: ${MIN_GPU_MEM_GB}GB"
 echo "Training GPUs: $N_GPUS, rollout TP: $ROLLOUT_TP"
@@ -274,9 +341,13 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   nvidia-smi
 fi
 
-ray stop --force || true
+if command -v ray >/dev/null 2>&1; then
+  ray stop --force || true
+else
+  "$PYTHON_CMD" -m ray.scripts.scripts stop --force || true
+fi
 
-python stock_agent_rl_mvp.py \
+"$PYTHON_CMD" stock_agent_rl_mvp.py \
   --mode all-train \
   "${TOKEN_ARGS[@]}" \
   "${AUTO_MODEL_ARGS[@]}" \

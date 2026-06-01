@@ -73,6 +73,7 @@ def make_verl_command(cfg: MVPConfig, train_path: Path, valid_path: Path) -> str
     repo = Path(cfg.verl_dir).expanduser().resolve()
     data_root = Path(cfg.data_dir).expanduser().resolve()
     model_path = resolve_model_path_for_command(cfg.model_path)
+    python_bin = Path(sys.executable).resolve()
     total_seq_len = int(cfg.max_prompt_length) + int(cfg.max_response_length)
     rollout_max_model_len = cfg.rollout_max_model_len or total_seq_len
     rollout_max_num_batched_tokens = cfg.rollout_max_num_batched_tokens or max(8192, total_seq_len * 2)
@@ -95,9 +96,9 @@ export STOCK_AGENT_DATA_DIR="{data_root}"
 export HYDRA_FULL_ERROR=1
 
 cd "{repo}"
-ray stop --force || true
+"{python_bin}" -m ray.scripts.scripts stop --force || true
 
-python3 -m verl.trainer.main_ppo \\
+"{python_bin}" -m verl.trainer.main_ppo \\
   algorithm.adv_estimator=grpo \\
   algorithm.use_kl_in_reward=False \\
   data.train_files="{train_path}" \\
@@ -189,7 +190,7 @@ def run_verl_command_script(script_path: Path) -> None:
         raise FileNotFoundError(f"verl command script not found: {script_path}")
     log(f"Launching verl training: {script_path}")
     env = os.environ.copy()
-    subprocess.run(["ray", "stop", "--force"], env=env, check=False)
+    subprocess.run([sys.executable, "-m", "ray.scripts.scripts", "stop", "--force"], env=env, check=False)
     subprocess.run(["bash", str(script_path)], env=env, check=True)
 
 
