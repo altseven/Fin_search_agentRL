@@ -20,13 +20,22 @@ MVP for a stock search-agent RLVR experiment with Tushare data and verl.
 
 ## Quick Start
 
-Clone 到新 GPU 服务器后，直接执行统一入口：
+Clone 到 8 卡 A800 服务器后，建议放到你指定的目录：
+
+```bash
+mkdir -p /kunlun_data/temp_ag_rl
+cd /kunlun_data/temp_ag_rl
+git clone https://github.com/altseven/Fin_search_agentRL.git
+cd /kunlun_data/temp_ag_rl/Fin_search_agentRL
+```
+
+然后直接执行统一入口：
 
 ```bash
 bash run_stock_agent_rl.sh "your_token"
 ```
 
-它会自动创建/复用 `stockverl` conda 环境、安装依赖、下载模型、检测 GPU 数量和显存，然后启动训练。
+它会自动创建/复用 `stockverl` conda 环境、安装依赖、下载 `Qwen/Qwen3-4B`、检测 8 张 70GB+ GPU，然后启动全参数 GRPO 训练。默认 profile 是 8 卡 A800：`train_batch_size=64`、`rollout_n=4`、`rollout_tp=4`、`max_prompt_length=3072`、`max_response_length=1024`，LoRA 默认关闭。
 
 如果已经装好环境和模型，只想直接跑训练：
 
@@ -51,6 +60,8 @@ If you only want to set up the environment without training:
 ```bash
 bash setup_stockverl_env.sh --cn-mirror --download-model
 ```
+
+CUDA 13.0 driver 下脚本默认安装 PyTorch `cu128` wheel，这是正常的；NVIDIA driver 向下兼容 CUDA 12.8 runtime。
 
 Advanced direct Python entry:
 

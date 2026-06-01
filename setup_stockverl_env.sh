@@ -9,7 +9,7 @@ Usage:
 Default behavior:
   - create/use conda env: stockverl
   - Python: 3.10
-  - install PyTorch automatically if missing, default CUDA wheel: cu124
+  - install PyTorch automatically if missing, default CUDA wheel: cu128
   - install this project's Python deps plus verl-main with vLLM support
   - do not install flash-attn by default, because stock_agent_rl_mvp.py defaults to sdpa
   - do not download model weights by default
@@ -19,7 +19,7 @@ Options:
   --python VERSION            Python version. Default: 3.10
   --install-torch auto|yes|no PyTorch install policy. Default: auto
   --torch-cuda cu121|cu124|cu126|cu128|cpu
-                              PyTorch wheel index flavor. Default: cu124
+                              PyTorch wheel index flavor. Default: cu128
   --cn-mirror                 Use Tsinghua PyPI mirror for normal pip packages
   --install-flash-attn        Try to install flash-attn. Not needed for current sdpa default
   --download-model            Download Qwen/Qwen3-4B to model/Qwen3-4B via ModelScope
@@ -30,7 +30,7 @@ Options:
 Examples:
   bash setup_stockverl_env.sh
   bash setup_stockverl_env.sh --cn-mirror
-  bash setup_stockverl_env.sh --torch-cuda cu128 --download-model
+  bash setup_stockverl_env.sh --download-model
   bash setup_stockverl_env.sh --env-name stockverl_a800 --install-flash-attn
 EOF
 }
@@ -38,7 +38,7 @@ EOF
 ENV_NAME="${ENV_NAME:-stockverl}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
 INSTALL_TORCH="${INSTALL_TORCH:-auto}"
-TORCH_CUDA="${TORCH_CUDA:-cu124}"
+TORCH_CUDA="${TORCH_CUDA:-cu128}"
 USE_CN_MIRROR="${USE_CN_MIRROR:-0}"
 INSTALL_FLASH_ATTN="${INSTALL_FLASH_ATTN:-0}"
 DOWNLOAD_MODEL="${DOWNLOAD_MODEL:-0}"
@@ -275,5 +275,5 @@ echo "Activate this environment with:"
 echo "  conda activate $ENV_NAME"
 echo
 echo "Typical next commands:"
-echo "  python stock_agent_rl_mvp.py --mode all-train --tushare-token \"YOUR_TOKEN\""
+echo "  bash run_stock_agent_rl.sh \"YOUR_TOKEN\" --no-setup"
 echo "  python stock_agent_rl_mvp.py --mode all-train --no-auto-download-model --tushare-token \"YOUR_TOKEN\""

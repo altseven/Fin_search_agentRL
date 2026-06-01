@@ -73,16 +73,26 @@ def make_verl_command(cfg: MVPConfig, train_path: Path, valid_path: Path) -> str
     repo = Path(cfg.verl_dir).expanduser().resolve()
     data_root = Path(cfg.data_dir).expanduser().resolve()
     model_path = resolve_model_path_for_command(cfg.model_path)
-    rollout_max_model_len = cfg.rollout_max_model_len or (int(cfg.max_prompt_length) + int(cfg.max_response_length))
-    rollout_max_num_batched_tokens = cfg.rollout_max_num_batched_tokens or max(2048, rollout_max_model_len)
+    total_seq_len = int(cfg.max_prompt_length) + int(cfg.max_response_length)
+    rollout_max_model_len = cfg.rollout_max_model_len or total_seq_len
+    rollout_max_num_batched_tokens = cfg.rollout_max_num_batched_tokens or max(8192, total_seq_len * 2)
+    actor_ppo_max_token_len_per_gpu = cfg.actor_ppo_max_token_len_per_gpu or total_seq_len * max(
+        1, int(cfg.ppo_micro_batch_size_per_gpu)
+    )
+    ref_log_prob_max_token_len_per_gpu = cfg.ref_log_prob_max_token_len_per_gpu or total_seq_len * 3
+    rollout_log_prob_max_token_len_per_gpu = cfg.rollout_log_prob_max_token_len_per_gpu or total_seq_len * 3
+    lora_overrides = ""
+    if cfg.lora_rank > 0:
+        lora_overrides = f"""  actor_rollout_ref.model.lora_rank={cfg.lora_rank} \\
+  actor_rollout_ref.model.lora_alpha={cfg.lora_alpha} \\
+  actor_rollout_ref.model.target_modules=all-linear \\
+"""
     command = f"""#!/usr/bin/env bash
 set -xeuo pipefail
 
 export PYTHONPATH="{project_root}:{repo}:${{PYTHONPATH:-}}"
 export STOCK_AGENT_DATA_DIR="{data_root}"
 export HYDRA_FULL_ERROR=1
-export NCCL_P2P_DISABLE=1
-export NCCL_IB_DISABLE=1
 
 cd "{repo}"
 ray stop --force || true
@@ -102,43 +112,53 @@ python3 -m verl.trainer.main_ppo \\
   +actor_rollout_ref.model.override_config.attn_implementation={cfg.attn_implementation} \\
   actor_rollout_ref.model.use_remove_padding={str(cfg.use_remove_padding).lower()} \\
   actor_rollout_ref.model.enable_gradient_checkpointing=True \\
-  actor_rollout_ref.model.lora_rank={cfg.lora_rank} \\
-  actor_rollout_ref.model.lora_alpha={cfg.lora_alpha} \\
-  actor_rollout_ref.model.target_modules=all-linear \\
-  actor_rollout_ref.actor.optim.lr=3e-5 \\
+{lora_overrides}  actor_rollout_ref.actor.optim.lr={cfg.actor_lr} \\
+  actor_rollout_ref.actor.optim.weight_decay={cfg.actor_weight_decay} \\
+  actor_rollout_ref.actor.optim.lr_warmup_steps={cfg.actor_lr_warmup_steps} \\
   actor_rollout_ref.actor.ppo_mini_batch_size={cfg.ppo_mini_batch_size} \\
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu={cfg.ppo_micro_batch_size_per_gpu} \\
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu={actor_ppo_max_token_len_per_gpu} \\
   actor_rollout_ref.actor.use_kl_loss=True \\
   actor_rollout_ref.actor.kl_loss_coef=0.001 \\
   actor_rollout_ref.actor.kl_loss_type=low_var_kl \\
   actor_rollout_ref.actor.entropy_coeff=0 \\
-  actor_rollout_ref.actor.fsdp_config.param_offload=True \\
-  actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \\
+  actor_rollout_ref.actor.fsdp_config.param_offload={str(cfg.actor_fsdp_param_offload).lower()} \\
+  actor_rollout_ref.actor.fsdp_config.optimizer_offload={str(cfg.actor_fsdp_optimizer_offload).lower()} \\
+  actor_rollout_ref.actor.fsdp_config.fsdp_size={cfg.actor_fsdp_size} \\
+  actor_rollout_ref.actor.ulysses_sequence_parallel_size={cfg.actor_ulysses_sequence_parallel_size} \\
   actor_rollout_ref.actor.use_dynamic_bsz=True \\
   actor_rollout_ref.rollout.name=vllm \\
   actor_rollout_ref.rollout.tensor_model_parallel_size={cfg.rollout_tp} \\
   actor_rollout_ref.rollout.gpu_memory_utilization={cfg.rollout_gpu_memory_utilization} \\
   actor_rollout_ref.rollout.max_model_len={rollout_max_model_len} \\
   actor_rollout_ref.rollout.max_num_batched_tokens={rollout_max_num_batched_tokens} \\
+  actor_rollout_ref.rollout.enable_chunked_prefill=True \\
+  actor_rollout_ref.rollout.enable_prefix_caching=True \\
   actor_rollout_ref.rollout.n={cfg.rollout_n} \\
   actor_rollout_ref.rollout.load_format=safetensors \\
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu={cfg.log_prob_micro_batch_size_per_gpu} \\
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu={rollout_log_prob_max_token_len_per_gpu} \\
   actor_rollout_ref.rollout.multi_turn.enable=True \\
   actor_rollout_ref.rollout.multi_turn.format=hermes \\
   actor_rollout_ref.rollout.multi_turn.function_tool_path="{tool_path}" \\
   actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \\
   actor_rollout_ref.rollout.multi_turn.max_tool_response_length=512 \\
   actor_rollout_ref.rollout.multi_turn.tokenization_sanity_check_mode=ignore_strippable \\
+  actor_rollout_ref.rollout.agent.num_workers={cfg.rollout_agent_num_workers} \\
   actor_rollout_ref.rollout.agent.default_agent_loop=tool_agent \\
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu={cfg.log_prob_micro_batch_size_per_gpu} \\
-  actor_rollout_ref.ref.fsdp_config.param_offload=True \\
+  actor_rollout_ref.ref.log_prob_max_token_len_per_gpu={ref_log_prob_max_token_len_per_gpu} \\
+  actor_rollout_ref.ref.fsdp_config.param_offload={str(cfg.ref_fsdp_param_offload).lower()} \\
+  actor_rollout_ref.ref.fsdp_config.fsdp_size={cfg.ref_fsdp_size} \\
+  actor_rollout_ref.ref.ulysses_sequence_parallel_size={cfg.ref_ulysses_sequence_parallel_size} \\
   reward.custom_reward_function.path="{reward_path}" \\
   reward.custom_reward_function.name=compute_score \\
   reward.reward_manager.name=naive \\
+  reward.num_workers={cfg.reward_num_workers} \\
   trainer.critic_warmup=0 \\
   trainer.logger='["console"]' \\
   trainer.project_name=stock_agent_rl_mvp \\
-  trainer.experiment_name=qwen3_4b_sse50_grpo_lora \\
+  trainer.experiment_name=qwen3_4b_sse50_grpo_full \\
   trainer.n_gpus_per_node={cfg.n_gpus_per_node} \\
   trainer.nnodes=1 \\
   trainer.save_freq=5 \\
@@ -169,8 +189,6 @@ def run_verl_command_script(script_path: Path) -> None:
         raise FileNotFoundError(f"verl command script not found: {script_path}")
     log(f"Launching verl training: {script_path}")
     env = os.environ.copy()
-    env.setdefault("NCCL_P2P_DISABLE", "1")
-    env.setdefault("NCCL_IB_DISABLE", "1")
     subprocess.run(["ray", "stop", "--force"], env=env, check=False)
     subprocess.run(["bash", str(script_path)], env=env, check=True)
 

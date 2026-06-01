@@ -16,7 +16,7 @@ Token alternatives:
 
 Options:
   --env-name NAME       Conda env name. Default: stockverl
-  --profile PROFILE     auto|tiny|conservative|large. Default: auto
+  --profile PROFILE     auto|a800_8gpu|debug. Default: auto
   --no-setup            Skip environment setup and model download
   --no-cn-mirror        Do not use the Tsinghua PyPI mirror during setup
   --no-download-model   Do not download Qwen3-4B during setup
@@ -24,7 +24,7 @@ Options:
 
 Examples:
   bash run_stock_agent_rl.sh "your_token"
-  bash run_stock_agent_rl.sh "your_token" --profile conservative
+  bash run_stock_agent_rl.sh "your_token" --profile a800_8gpu
   bash run_stock_agent_rl.sh "your_token" --no-setup
   bash run_stock_agent_rl.sh "your_token" -- --total-epochs 2
 EOF
@@ -90,15 +90,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$PROFILE" in
-  auto|tiny|conservative|large) ;;
+  auto|a800_8gpu|debug) ;;
   *)
-    echo "--profile must be one of: auto, tiny, conservative, large" >&2
+    echo "--profile must be one of: auto, a800_8gpu, debug" >&2
     exit 2
     ;;
 esac
 
 if [[ "$RUN_SETUP" == "1" ]]; then
-  SETUP_ARGS=(--env-name "$ENV_NAME")
+  SETUP_ARGS=(--env-name "$ENV_NAME" --torch-cuda cu128)
   if [[ "$USE_CN_MIRROR" == "1" ]]; then
     SETUP_ARGS+=(--cn-mirror)
   fi
@@ -159,10 +159,17 @@ def emit(
     rollout_tp,
     train_batch,
     ppo_mini,
+    ppo_micro,
+    logprob_micro,
     rollout_n,
     max_prompt,
     max_response,
     gpu_mem_util,
+    rollout_max_model_len,
+    rollout_max_num_batched_tokens,
+    agent_workers,
+    reward_workers,
+    total_epochs,
 ):
     print(f"PROFILE_NAME={name}")
     print(f"GPU_COUNT={count}")
@@ -171,27 +178,65 @@ def emit(
     print(f"ROLLOUT_TP={rollout_tp}")
     print(f"TRAIN_BATCH_SIZE={train_batch}")
     print(f"PPO_MINI_BATCH_SIZE={ppo_mini}")
+    print(f"PPO_MICRO_BATCH_SIZE_PER_GPU={ppo_micro}")
+    print(f"LOG_PROB_MICRO_BATCH_SIZE_PER_GPU={logprob_micro}")
     print(f"ROLLOUT_N={rollout_n}")
     print(f"MAX_PROMPT_LENGTH={max_prompt}")
     print(f"MAX_RESPONSE_LENGTH={max_response}")
     print(f"ROLLOUT_GPU_MEMORY_UTILIZATION={gpu_mem_util}")
+    print(f"ROLLOUT_MAX_MODEL_LEN={rollout_max_model_len}")
+    print(f"ROLLOUT_MAX_NUM_BATCHED_TOKENS={rollout_max_num_batched_tokens}")
+    print(f"ROLLOUT_AGENT_NUM_WORKERS={agent_workers}")
+    print(f"REWARD_NUM_WORKERS={reward_workers}")
+    print(f"TOTAL_EPOCHS={total_epochs}")
 
-if profile == "tiny":
-    emit("tiny", 1, 1, 1, 1, 1, 1024, 256, 0.20)
-elif profile == "conservative":
-    emit("conservative", 1, 1, 2, 2, 1, 1536, 512, 0.35)
-elif profile == "large":
-    n = count
-    train = min(max(n * 4, 4), 16)
-    emit("large", n, min(n, 2), train, min(train, 8), 2, 2048, 1024, 0.45)
-elif min_mem >= 70:
-    n = count
-    train = min(max(n * 4, 4), 16)
-    emit("auto_large_70gb", n, min(n, 2), train, min(train, 8), 2, 2048, 1024, 0.45)
-elif min_mem >= 39:
-    emit("auto_conservative_40gb", 1, 1, 2, 2, 1, 1536, 512, 0.35)
+def emit_a800_profile(name: str) -> None:
+    emit(
+        name=name,
+        n_gpus=8,
+        rollout_tp=4,
+        train_batch=64,
+        ppo_mini=32,
+        ppo_micro=2,
+        logprob_micro=2,
+        rollout_n=4,
+        max_prompt=3072,
+        max_response=1024,
+        gpu_mem_util=0.70,
+        rollout_max_model_len=4096,
+        rollout_max_num_batched_tokens=16384,
+        agent_workers=8,
+        reward_workers=8,
+        total_epochs=2,
+    )
+
+if profile in {"auto", "a800_8gpu"}:
+    if count < 8 or min_mem < 70:
+        raise SystemExit(
+            f"Profile {profile!r} expects 8 GPUs with at least 70GB each; "
+            f"detected {count} GPU(s), min memory {min_mem:.1f}GB. "
+            "Use --profile debug only for a quick non-production smoke test."
+        )
+    emit_a800_profile("a800_8gpu")
 else:
-    emit("auto_tiny_lt40gb", 1, 1, 1, 1, 1, 1024, 256, 0.20)
+    emit(
+        name="debug",
+        n_gpus=1,
+        rollout_tp=1,
+        train_batch=8,
+        ppo_mini=8,
+        ppo_micro=1,
+        logprob_micro=1,
+        rollout_n=2,
+        max_prompt=2048,
+        max_response=512,
+        gpu_mem_util=0.50,
+        rollout_max_model_len=2560,
+        rollout_max_num_batched_tokens=8192,
+        agent_workers=1,
+        reward_workers=1,
+        total_epochs=1,
+    )
 PY
 )
 
@@ -215,8 +260,9 @@ echo "Env: $ENV_NAME"
 echo "Selected profile: $PROFILE_NAME"
 echo "Detected GPUs: $GPU_COUNT, min memory: ${MIN_GPU_MEM_GB}GB"
 echo "Training GPUs: $N_GPUS, rollout TP: $ROLLOUT_TP"
-echo "Batch: train=$TRAIN_BATCH_SIZE, ppo_mini=$PPO_MINI_BATCH_SIZE, rollout_n=$ROLLOUT_N"
-echo "Prompt/response: $MAX_PROMPT_LENGTH/$MAX_RESPONSE_LENGTH"
+echo "Batch: train=$TRAIN_BATCH_SIZE, ppo_mini=$PPO_MINI_BATCH_SIZE, ppo_micro_per_gpu=$PPO_MICRO_BATCH_SIZE_PER_GPU, rollout_n=$ROLLOUT_N"
+echo "Prompt/response: $MAX_PROMPT_LENGTH/$MAX_RESPONSE_LENGTH, rollout max model len=$ROLLOUT_MAX_MODEL_LEN"
+echo "Workers: agent=$ROLLOUT_AGENT_NUM_WORKERS, reward=$REWARD_NUM_WORKERS"
 echo
 
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -233,10 +279,20 @@ python stock_agent_rl_mvp.py \
   --rollout-tp "$ROLLOUT_TP" \
   --train-batch-size "$TRAIN_BATCH_SIZE" \
   --ppo-mini-batch-size "$PPO_MINI_BATCH_SIZE" \
-  --ppo-micro-batch-size-per-gpu 1 \
-  --log-prob-micro-batch-size-per-gpu 1 \
+  --ppo-micro-batch-size-per-gpu "$PPO_MICRO_BATCH_SIZE_PER_GPU" \
+  --log-prob-micro-batch-size-per-gpu "$LOG_PROB_MICRO_BATCH_SIZE_PER_GPU" \
   --rollout-n "$ROLLOUT_N" \
   --max-prompt-length "$MAX_PROMPT_LENGTH" \
   --max-response-length "$MAX_RESPONSE_LENGTH" \
   --rollout-gpu-memory-utilization "$ROLLOUT_GPU_MEMORY_UTILIZATION" \
+  --rollout-max-model-len "$ROLLOUT_MAX_MODEL_LEN" \
+  --rollout-max-num-batched-tokens "$ROLLOUT_MAX_NUM_BATCHED_TOKENS" \
+  --rollout-agent-num-workers "$ROLLOUT_AGENT_NUM_WORKERS" \
+  --reward-num-workers "$REWARD_NUM_WORKERS" \
+  --total-epochs "$TOTAL_EPOCHS" \
+  --sample-stride 3 \
+  --max-tasks 8000 \
+  --lora-rank 0 \
+  --lora-alpha 0 \
+  --actor-lr 1e-6 \
   "${EXTRA_ARGS[@]}"

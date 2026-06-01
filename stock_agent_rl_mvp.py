@@ -90,40 +90,65 @@ def parse_args(argv: list[str] | None = None) -> MVPConfig:
     p.add_argument("--train-end-date", default="20241231")
     p.add_argument("--valid-end-date", default="20250930")
     p.add_argument("--horizon", type=int, default=5)
-    p.add_argument("--sample-stride", type=int, default=5)
+    p.add_argument("--sample-stride", type=int, default=3)
     p.add_argument("--max-stocks", type=int, default=50)
-    p.add_argument("--max-tasks", type=int, default=3000)
+    p.add_argument("--max-tasks", type=int, default=8000)
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--sleep-seconds", type=float, default=0.12)
     p.add_argument("--force-refresh", action="store_true")
     p.add_argument("--model-path", default=DEFAULT_MODEL_PATH)
-    p.add_argument("--rollout-n", type=int, default=2)
-    p.add_argument("--train-batch-size", type=int, default=8)
-    p.add_argument("--ppo-mini-batch-size", type=int, default=8)
-    p.add_argument("--ppo-micro-batch-size-per-gpu", type=int, default=1)
-    p.add_argument("--log-prob-micro-batch-size-per-gpu", type=int, default=1)
-    p.add_argument("--max-prompt-length", type=int, default=2048)
+    p.add_argument("--rollout-n", type=int, default=4)
+    p.add_argument("--train-batch-size", type=int, default=64)
+    p.add_argument("--ppo-mini-batch-size", type=int, default=32)
+    p.add_argument("--ppo-micro-batch-size-per-gpu", type=int, default=2)
+    p.add_argument("--log-prob-micro-batch-size-per-gpu", type=int, default=2)
+    p.add_argument("--max-prompt-length", type=int, default=3072)
     p.add_argument("--max-response-length", type=int, default=1024)
-    p.add_argument("--total-epochs", type=int, default=1)
-    p.add_argument("--n-gpus-per-node", type=int, default=2)
-    p.add_argument("--lora-rank", type=int, default=32)
-    p.add_argument("--lora-alpha", type=int, default=32)
-    p.add_argument("--rollout-tp", type=int, default=2)
-    p.add_argument("--rollout-gpu-memory-utilization", type=float, default=0.45)
+    p.add_argument("--total-epochs", type=int, default=2)
+    p.add_argument("--n-gpus-per-node", type=int, default=8)
+    p.add_argument("--lora-rank", type=int, default=0)
+    p.add_argument("--lora-alpha", type=int, default=0)
+    p.add_argument("--actor-lr", type=float, default=1e-6)
+    p.add_argument("--actor-weight-decay", type=float, default=0.1)
+    p.add_argument("--actor-lr-warmup-steps", type=int, default=10)
+    p.add_argument("--actor-ppo-max-token-len-per-gpu", type=int, default=None)
+    p.add_argument("--ref-log-prob-max-token-len-per-gpu", type=int, default=None)
+    p.add_argument("--rollout-log-prob-max-token-len-per-gpu", type=int, default=None)
+    p.add_argument("--actor-fsdp-size", type=int, default=-1)
+    p.add_argument("--ref-fsdp-size", type=int, default=-1)
+    p.add_argument("--actor-ulysses-sequence-parallel-size", type=int, default=1)
+    p.add_argument("--ref-ulysses-sequence-parallel-size", type=int, default=1)
+    p.add_argument("--actor-fsdp-param-offload", dest="actor_fsdp_param_offload", action="store_true")
+    p.add_argument("--no-actor-fsdp-param-offload", dest="actor_fsdp_param_offload", action="store_false")
+    p.add_argument("--actor-fsdp-optimizer-offload", dest="actor_fsdp_optimizer_offload", action="store_true")
+    p.add_argument("--no-actor-fsdp-optimizer-offload", dest="actor_fsdp_optimizer_offload", action="store_false")
+    p.add_argument("--ref-fsdp-param-offload", dest="ref_fsdp_param_offload", action="store_true")
+    p.add_argument("--no-ref-fsdp-param-offload", dest="ref_fsdp_param_offload", action="store_false")
+    p.add_argument("--rollout-tp", type=int, default=4)
+    p.add_argument("--rollout-gpu-memory-utilization", type=float, default=0.70)
     p.add_argument("--rollout-max-model-len", type=int, default=None)
     p.add_argument("--rollout-max-num-batched-tokens", type=int, default=None)
+    p.add_argument("--rollout-agent-num-workers", type=int, default=8)
+    p.add_argument("--reward-num-workers", type=int, default=8)
     p.add_argument(
         "--attn-implementation",
         default="sdpa",
         choices=["sdpa", "flash_attention_2", "eager"],
-        help="HF attention backend. sdpa avoids the flash-attn package and is easiest on 3090 boxes.",
+        help="HF attention backend. sdpa is the most portable; flash_attention_2 needs flash-attn installed.",
     )
     p.add_argument("--use-remove-padding", dest="use_remove_padding", action="store_true")
     p.add_argument("--no-use-remove-padding", dest="use_remove_padding", action="store_false")
     p.add_argument("--command-file", default="run_verl_stock_grpo.sh")
     p.add_argument("--no-auto-download-model", dest="auto_download_model", action="store_false")
     p.add_argument("--no-write-verl-command", dest="write_verl_command", action="store_false")
-    p.set_defaults(write_verl_command=True, auto_download_model=True, use_remove_padding=False)
+    p.set_defaults(
+        write_verl_command=True,
+        auto_download_model=True,
+        use_remove_padding=True,
+        actor_fsdp_param_offload=False,
+        actor_fsdp_optimizer_offload=False,
+        ref_fsdp_param_offload=False,
+    )
     args = p.parse_args(argv)
     return MVPConfig(**vars(args))
 
@@ -145,31 +170,46 @@ def main(
     train_end_date: str = "20241231",
     valid_end_date: str = "20250930",
     horizon: int = 5,
-    sample_stride: int = 5,
+    sample_stride: int = 3,
     max_stocks: int = 50,
-    max_tasks: int = 3000,
+    max_tasks: int = 8000,
     seed: int = 7,
     sleep_seconds: float = 0.12,
     force_refresh: bool = False,
     write_verl_command: bool = True,
     model_path: str = DEFAULT_MODEL_PATH,
-    rollout_n: int = 2,
-    train_batch_size: int = 8,
-    ppo_mini_batch_size: int = 8,
-    ppo_micro_batch_size_per_gpu: int = 1,
-    log_prob_micro_batch_size_per_gpu: int = 1,
-    max_prompt_length: int = 2048,
+    rollout_n: int = 4,
+    train_batch_size: int = 64,
+    ppo_mini_batch_size: int = 32,
+    ppo_micro_batch_size_per_gpu: int = 2,
+    log_prob_micro_batch_size_per_gpu: int = 2,
+    max_prompt_length: int = 3072,
     max_response_length: int = 1024,
-    total_epochs: int = 1,
-    n_gpus_per_node: int = 2,
-    lora_rank: int = 32,
-    lora_alpha: int = 32,
-    rollout_tp: int = 2,
-    rollout_gpu_memory_utilization: float = 0.45,
+    total_epochs: int = 2,
+    n_gpus_per_node: int = 8,
+    lora_rank: int = 0,
+    lora_alpha: int = 0,
+    actor_lr: float = 1e-6,
+    actor_weight_decay: float = 0.1,
+    actor_lr_warmup_steps: int = 10,
+    actor_ppo_max_token_len_per_gpu: int | None = None,
+    ref_log_prob_max_token_len_per_gpu: int | None = None,
+    rollout_log_prob_max_token_len_per_gpu: int | None = None,
+    actor_fsdp_size: int = -1,
+    ref_fsdp_size: int = -1,
+    actor_ulysses_sequence_parallel_size: int = 1,
+    ref_ulysses_sequence_parallel_size: int = 1,
+    actor_fsdp_param_offload: bool = False,
+    actor_fsdp_optimizer_offload: bool = False,
+    ref_fsdp_param_offload: bool = False,
+    rollout_tp: int = 4,
+    rollout_gpu_memory_utilization: float = 0.70,
     rollout_max_model_len: int | None = None,
     rollout_max_num_batched_tokens: int | None = None,
+    rollout_agent_num_workers: int = 8,
+    reward_num_workers: int = 8,
     attn_implementation: str = "sdpa",
-    use_remove_padding: bool = False,
+    use_remove_padding: bool = True,
     command_file: str = "run_verl_stock_grpo.sh",
     auto_download_model: bool = True,
 ) -> dict[str, Any]:
@@ -209,10 +249,25 @@ def main(
         n_gpus_per_node=n_gpus_per_node,
         lora_rank=lora_rank,
         lora_alpha=lora_alpha,
+        actor_lr=actor_lr,
+        actor_weight_decay=actor_weight_decay,
+        actor_lr_warmup_steps=actor_lr_warmup_steps,
+        actor_ppo_max_token_len_per_gpu=actor_ppo_max_token_len_per_gpu,
+        ref_log_prob_max_token_len_per_gpu=ref_log_prob_max_token_len_per_gpu,
+        rollout_log_prob_max_token_len_per_gpu=rollout_log_prob_max_token_len_per_gpu,
+        actor_fsdp_size=actor_fsdp_size,
+        ref_fsdp_size=ref_fsdp_size,
+        actor_ulysses_sequence_parallel_size=actor_ulysses_sequence_parallel_size,
+        ref_ulysses_sequence_parallel_size=ref_ulysses_sequence_parallel_size,
+        actor_fsdp_param_offload=actor_fsdp_param_offload,
+        actor_fsdp_optimizer_offload=actor_fsdp_optimizer_offload,
+        ref_fsdp_param_offload=ref_fsdp_param_offload,
         rollout_tp=rollout_tp,
         rollout_gpu_memory_utilization=rollout_gpu_memory_utilization,
         rollout_max_model_len=rollout_max_model_len,
         rollout_max_num_batched_tokens=rollout_max_num_batched_tokens,
+        rollout_agent_num_workers=rollout_agent_num_workers,
+        reward_num_workers=reward_num_workers,
         attn_implementation=attn_implementation,
         use_remove_padding=use_remove_padding,
         command_file=command_file,
