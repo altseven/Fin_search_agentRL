@@ -86,6 +86,18 @@ bash setup_stockverl_env.sh --cn-mirror --download-model
 
 Downloaded wheels and hub caches are kept under `.cache/` by default, so repeated runs on the same persistent disk can reuse them.
 
+The setup script defaults to `--dependency-policy compatible`: it first diagnoses packages already present in the image and only installs missing or import-broken packages. To force the exact locked versions in `requirements-stockverl.txt`, use:
+
+```bash
+bash setup_stockverl_env.sh --env-mode system --dependency-policy strict
+```
+
+To inspect a new cloud image without installing anything:
+
+```bash
+bash setup_stockverl_env.sh --env-mode system --diagnose-only
+```
+
 CUDA 13.0 driver 下脚本默认安装 PyTorch `cu128` wheel，这是正常的；NVIDIA driver 向下兼容 CUDA 12.8 runtime。
 
 Advanced direct Python entry:
@@ -139,4 +151,14 @@ For the custom Tushare endpoint, the script sets:
 pro._DataApi__http_url = "http://lianghua.nanyangqiankun.top"
 ```
 
-Do not commit `data/`, `model/`, or `result/` contents.
+Do not commit `model/` or `result/` contents.
+
+For this project, only reusable parquet data caches should be synced. The code reads `.parquet` first, then falls back to `.pkl` and `.csv`, so syncing parquet is enough and avoids slow repeated Tushare calls:
+
+```bash
+git add data/raw/*.parquet data/processed/*.parquet
+git commit -m "Add cached parquet data"
+git push origin master
+```
+
+Do not sync `data/**/*.csv`, `data/**/*.pkl`, `model/`, `result/`, `.cache/`, or `output.log`.

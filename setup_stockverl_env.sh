@@ -24,17 +24,23 @@ Options:
                               PyTorch wheel index flavor. Default: cu128
   --torch-version VERSION     Torch version. Default: 2.9.0
   --requirements PATH         Locked requirements file. Default: requirements-stockverl.txt
+  --dependency-policy POLICY  compatible|strict. Default: compatible
+                              compatible keeps importable image packages and installs only missing/broken ones
+                              strict forces the locked package versions in --requirements
   --cn-mirror                 Prefer China mirrors for pip/Torch/model downloads, then fall back to official sources
   --install-flash-attn        Try to install flash-attn. Not needed for current sdpa default
   --download-model            Download Qwen/Qwen3-4B to model/Qwen3-4B
   --model-id ID               ModelScope model id. Default: Qwen/Qwen3-4B
   --model-dir DIR             Local model dir. Default: model/Qwen3-4B
+  --diagnose-only             Print Python/package/GPU diagnostics and exit without installing
   -h, --help                  Show this help
 
 Examples:
   bash setup_stockverl_env.sh
   bash setup_stockverl_env.sh --cn-mirror
   bash setup_stockverl_env.sh --download-model
+  bash setup_stockverl_env.sh --env-mode system --diagnose-only
+  bash setup_stockverl_env.sh --env-mode system --dependency-policy compatible
   bash setup_stockverl_env.sh --env-name stockverl_a800 --install-flash-attn
 EOF
 }
@@ -49,11 +55,13 @@ TORCH_VERSION="${TORCH_VERSION:-2.9.0}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.24.0}"
 TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.9.0}"
 REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-requirements-stockverl.txt}"
+DEPENDENCY_POLICY="${DEPENDENCY_POLICY:-compatible}"
 USE_CN_MIRROR="${USE_CN_MIRROR:-0}"
 INSTALL_FLASH_ATTN="${INSTALL_FLASH_ATTN:-0}"
 DOWNLOAD_MODEL="${DOWNLOAD_MODEL:-0}"
 MODEL_ID="${MODEL_ID:-Qwen/Qwen3-4B}"
 MODEL_DIR="${MODEL_DIR:-model/Qwen3-4B}"
+DIAGNOSE_ONLY="${DIAGNOSE_ONLY:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -89,6 +97,10 @@ while [[ $# -gt 0 ]]; do
       REQUIREMENTS_FILE="$2"
       shift 2
       ;;
+    --dependency-policy)
+      DEPENDENCY_POLICY="$2"
+      shift 2
+      ;;
     --cn-mirror)
       USE_CN_MIRROR=1
       shift
@@ -108,6 +120,10 @@ while [[ $# -gt 0 ]]; do
     --model-dir)
       MODEL_DIR="$2"
       shift 2
+      ;;
+    --diagnose-only)
+      DIAGNOSE_ONLY=1
+      shift
       ;;
     -h|--help)
       usage
@@ -145,6 +161,14 @@ case "$TORCH_CUDA" in
     ;;
 esac
 
+case "$DEPENDENCY_POLICY" in
+  compatible|strict) ;;
+  *)
+    echo "--dependency-policy must be one of: compatible, strict" >&2
+    exit 2
+    ;;
+esac
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
@@ -155,6 +179,7 @@ echo "Conda env: $ENV_NAME"
 echo "Python: $PYTHON_VERSION"
 echo "Install torch: $INSTALL_TORCH ($TORCH_CUDA, torch==$TORCH_VERSION)"
 echo "Requirements lock: $REQUIREMENTS_FILE"
+echo "Dependency policy: $DEPENDENCY_POLICY"
 echo "Use CN mirror: $USE_CN_MIRROR"
 echo "Install flash-attn: $INSTALL_FLASH_ATTN"
 echo
@@ -266,6 +291,57 @@ fi
 
 PIP_COMMON_ARGS=(--timeout "${PIP_TIMEOUT:-30}" --retries "${PIP_RETRIES:-3}" --prefer-binary)
 
+diagnose_python_env() {
+  "$PYTHON_CMD" - <<'PY'
+import importlib
+import platform
+import sys
+
+packages = [
+    ("torch", "torch"),
+    ("torchvision", "torchvision"),
+    ("torchaudio", "torchaudio"),
+    ("ray", "ray"),
+    ("vllm", "vllm"),
+    ("transformers", "transformers"),
+    ("datasets", "datasets"),
+    ("pandas", "pandas"),
+    ("pyarrow", "pyarrow"),
+    ("tushare", "tushare"),
+    ("modelscope", "modelscope"),
+    ("huggingface_hub", "huggingface_hub"),
+    ("hydra", "hydra"),
+    ("omegaconf", "omegaconf"),
+    ("tensordict", "tensordict"),
+    ("torchdata", "torchdata"),
+    ("peft", "peft"),
+    ("accelerate", "accelerate"),
+    ("fastapi", "fastapi"),
+    ("uvicorn", "uvicorn"),
+    ("wandb", "wandb"),
+    ("flash_attn", "flash_attn"),
+]
+
+print("python:", sys.version.replace("\n", " "))
+print("executable:", sys.executable)
+print("platform:", platform.platform())
+for label, module_name in packages:
+    try:
+        mod = importlib.import_module(module_name)
+        version = getattr(mod, "__version__", "unknown")
+        print(f"{label}: {version}")
+        if module_name == "torch":
+            print("torch.cuda.is_available:", mod.cuda.is_available())
+            print("torch.version.cuda:", getattr(mod.version, "cuda", None))
+            print("torch.cuda.device_count:", mod.cuda.device_count())
+            for i in range(mod.cuda.device_count()):
+                props = mod.cuda.get_device_properties(i)
+                print(f"gpu[{i}]: {props.name}, {props.total_memory / 1024**3:.1f} GB")
+    except Exception as exc:
+        print(f"{label}: IMPORT_ERROR {type(exc).__name__}: {exc}")
+PY
+}
+
 pip_install() {
   if [[ "$USE_CN_MIRROR" != "1" ]]; then
     "$PYTHON_CMD" -m pip install "${PIP_COMMON_ARGS[@]}" "${PIP_BREAK_ARGS[@]}" "$@"
@@ -341,7 +417,11 @@ pip_install_torch() {
 }
 
 echo "== Upgrading packaging tools =="
-pip_install -U pip setuptools wheel packaging ninja
+if [[ "$DEPENDENCY_POLICY" == "strict" ]]; then
+  pip_install -U pip setuptools wheel packaging ninja
+else
+  pip_install setuptools wheel packaging ninja
+fi
 
 if [[ "$REQUIREMENTS_FILE" = /* ]]; then
   REQUIREMENTS_PATH="$REQUIREMENTS_FILE"
@@ -353,18 +433,28 @@ if [[ ! -f "$REQUIREMENTS_PATH" ]]; then
   exit 1
 fi
 
+echo "== Existing Python package diagnostics =="
+diagnose_python_env || true
+if [[ "$DIAGNOSE_ONLY" == "1" ]]; then
+  echo "== Diagnose-only mode: exiting before installation =="
+  exit 0
+fi
+
 torch_import_ok=0
-if TORCH_VERSION="$TORCH_VERSION" "$PYTHON_CMD" - <<'PY'
+if TORCH_VERSION="$TORCH_VERSION" TORCH_CUDA="$TORCH_CUDA" DEPENDENCY_POLICY="$DEPENDENCY_POLICY" "$PYTHON_CMD" - <<'PY'
 import os
-import sys
 
 try:
     import torch
     print("torch already importable:", torch.__version__, "cuda:", torch.cuda.is_available())
-    expected = os.environ["TORCH_VERSION"]
-    installed = torch.__version__.split("+", 1)[0]
-    if installed != expected:
-        print(f"torch version mismatch: expected {expected}, got {installed}")
+    if os.environ["DEPENDENCY_POLICY"] == "strict":
+        expected = os.environ["TORCH_VERSION"]
+        installed = torch.__version__.split("+", 1)[0]
+        if installed != expected:
+            print(f"torch version mismatch: expected {expected}, got {installed}")
+            raise SystemExit(1)
+    elif os.environ["TORCH_CUDA"] != "cpu" and not torch.cuda.is_available():
+        print("torch import ok, but CUDA is not available")
         raise SystemExit(1)
 except Exception as exc:
     print("torch check failed:", exc)
@@ -386,25 +476,98 @@ else
   echo "== PyTorch already exists, keeping it =="
 fi
 
-echo "== Installing project runtime packages =="
-pip_install -U --upgrade-strategy eager -r "$REQUIREMENTS_PATH"
+COMPAT_REQUIREMENTS_PATH="$CACHE_ROOT/requirements-missing-or-broken.txt"
+
+build_compatible_requirements() {
+  REQUIREMENTS_PATH="$REQUIREMENTS_PATH" OUT_PATH="$COMPAT_REQUIREMENTS_PATH" "$PYTHON_CMD" - <<'PY'
+import importlib
+import os
+from importlib.metadata import PackageNotFoundError, version
+
+from packaging.requirements import Requirement
+
+module_map = {
+    "huggingface-hub": "huggingface_hub",
+    "hydra-core": "hydra",
+    "nvidia-ml-py": "pynvml",
+    "pyarrow-hotfix": "pyarrow_hotfix",
+    "TransferQueue": "transfer_queue",
+}
+
+path = os.environ["REQUIREMENTS_PATH"]
+out_path = os.environ["OUT_PATH"]
+to_install = []
+kept = []
+broken = []
+for raw in open(path, encoding="utf-8"):
+    line = raw.split("#", 1)[0].strip()
+    if not line:
+        continue
+    req = Requirement(line)
+    package = req.name
+    module_name = module_map.get(package, package.replace("-", "_"))
+    try:
+        installed = version(package)
+    except PackageNotFoundError:
+        to_install.append(line)
+        broken.append(f"{package}: missing")
+        continue
+    try:
+        importlib.import_module(module_name)
+    except Exception as exc:
+        to_install.append(line)
+        broken.append(f"{package}: installed {installed}, import failed: {type(exc).__name__}: {exc}")
+        continue
+    kept.append(f"{package}: installed {installed}, kept")
+
+for line in kept:
+    print(line)
+if broken:
+    print("Packages to install because they are missing or import-broken:")
+    for line in broken:
+        print("  " + line)
+
+with open(out_path, "w", encoding="utf-8") as f:
+    for line in to_install:
+        f.write(line + "\n")
+print(f"compatible requirements file: {out_path}, count={len(to_install)}")
+PY
+}
+
+if [[ "$DEPENDENCY_POLICY" == "strict" ]]; then
+  echo "== Installing locked project runtime packages =="
+  pip_install -U --upgrade-strategy eager -r "$REQUIREMENTS_PATH"
+else
+  echo "== Installing only missing or import-broken runtime packages =="
+  build_compatible_requirements
+  if [[ -s "$COMPAT_REQUIREMENTS_PATH" ]]; then
+    pip_install --upgrade-strategy only-if-needed -r "$COMPAT_REQUIREMENTS_PATH"
+  else
+    echo "All runtime packages are already importable; skipping pip install -r."
+  fi
+fi
 
 echo "== Installing verl-main =="
 cd "$REPO_ROOT/verl-main"
 pip_install -e . --no-deps
 cd "$REPO_ROOT"
 
-echo "== Re-applying locked runtime stack =="
-pip_install -U --upgrade-strategy eager -r "$REQUIREMENTS_PATH"
+if [[ "$DEPENDENCY_POLICY" == "strict" ]]; then
+  echo "== Re-applying locked runtime stack =="
+  pip_install -U --upgrade-strategy eager -r "$REQUIREMENTS_PATH"
+else
+  echo "== Skipping locked runtime re-apply under compatible policy =="
+fi
 
-echo "== Locked package verification =="
-REQUIREMENTS_PATH="$REQUIREMENTS_PATH" "$PYTHON_CMD" - <<'PY'
+echo "== Runtime package verification =="
+REQUIREMENTS_PATH="$REQUIREMENTS_PATH" DEPENDENCY_POLICY="$DEPENDENCY_POLICY" "$PYTHON_CMD" - <<'PY'
 import os
 from importlib.metadata import PackageNotFoundError, version
 
 from packaging.requirements import Requirement
 
 path = os.environ["REQUIREMENTS_PATH"]
+strict = os.environ["DEPENDENCY_POLICY"] == "strict"
 mismatches = []
 for raw in open(path, encoding="utf-8"):
     line = raw.split("#", 1)[0].strip()
@@ -428,7 +591,10 @@ for raw in open(path, encoding="utf-8"):
     else:
         print(f"{req.name}: {installed}")
 if mismatches:
-    raise SystemExit("Locked package mismatch:\n" + "\n".join(mismatches))
+    message = "Locked package mismatch:\n" + "\n".join(mismatches)
+    if strict:
+        raise SystemExit(message)
+    print("WARNING: " + message.replace("\n", "\nWARNING: "))
 PY
 
 if [[ "$INSTALL_FLASH_ATTN" == "1" ]]; then

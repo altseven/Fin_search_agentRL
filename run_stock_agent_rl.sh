@@ -381,4 +381,5 @@ fi
   --lora-rank 0 \
   --lora-alpha 0 \
   --actor-lr 1e-6 \
+  --no-use-remove-padding \
   "${EXTRA_ARGS[@]}"
