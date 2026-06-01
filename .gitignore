@@ -20,3 +20,6 @@ result/*
 
 # Optional generated root-level training launcher; the script now writes it under result/<run_id>/.
 run_verl_stock_grpo.sh
+
+# Latest cloud/server run log. Regenerated and overwritten by run_stock_agent_rl.sh.
+output.log

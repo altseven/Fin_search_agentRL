@@ -37,6 +37,13 @@ bash run_stock_agent_rl.sh "your_token"
 
 它会自动创建/复用 `stockverl` conda 环境、安装依赖、下载 `Qwen/Qwen3-4B`、检测 8 张 70GB+ GPU，然后启动全参数 GRPO 训练。默认 profile 是 8 卡 A800：`train_batch_size=64`、`rollout_n=4`、`rollout_tp=4`、`max_prompt_length=3072`、`max_response_length=1024`，LoRA 默认关闭。
 
+统一入口会把所有 stdout/stderr 同步写到项目根目录的 `output.log`，每次运行都会覆盖旧日志。云服务器上任务结束后可以直接查看：
+
+```bash
+cd /kunlun_data/temp_ag_rl/Fin_search_agentRL
+tail -n 200 output.log
+```
+
 如果已经装好环境和模型，只想直接跑训练：
 
 ```bash

@@ -33,6 +33,11 @@ EOF
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
+LOG_FILE="$REPO_ROOT/output.log"
+: > "$LOG_FILE"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "== Logging to $LOG_FILE =="
+
 ENV_NAME="${ENV_NAME:-stockverl}"
 PROFILE="auto"
 RUN_SETUP=1
