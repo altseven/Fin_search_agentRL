@@ -38,7 +38,16 @@ from rl_config import MVPConfig
 from rl_data import build_data
 from rl_dataset import export_verl_dataset
 from rl_reward import compute_score
-from rl_tools import get_market_context, get_price_factors, search_announcements
+from rl_sft import export_sft_dataset, write_sft_command_script
+from rl_tools import (
+    get_fundamental_snapshot,
+    get_industry_context,
+    get_market_context,
+    get_peer_context,
+    get_price_factors,
+    search_announcements,
+    search_news,
+)
 from rl_verl import (
     ensure_model_available,
     find_latest_verl_command,
@@ -53,7 +62,11 @@ __all__ = [
     "compute_score",
     "get_price_factors",
     "get_market_context",
+    "get_industry_context",
+    "get_fundamental_snapshot",
+    "get_peer_context",
     "search_announcements",
+    "search_news",
     "main",
     "parse_args",
 ]
@@ -69,8 +82,10 @@ def parse_args(argv: list[str] | None = None) -> MVPConfig:
             "all-train",
             "build-data",
             "export-verl",
+            "export-sft",
             "rule-rollout",
             "print-verl-command",
+            "print-sft-command",
             "train-latest",
             "download-hints",
         ],
@@ -93,6 +108,15 @@ def parse_args(argv: list[str] | None = None) -> MVPConfig:
     p.add_argument("--sample-stride", type=int, default=3)
     p.add_argument("--max-stocks", type=int, default=50)
     p.add_argument("--max-tasks", type=int, default=8000)
+    p.add_argument("--max-tool-calls", type=int, default=4)
+    p.add_argument("--up-quantile", type=float, default=0.70)
+    p.add_argument("--down-quantile", type=float, default=0.30)
+    p.add_argument("--pnl-scale", type=float, default=0.03)
+    p.add_argument("--fetch-optional-docs", dest="fetch_optional_docs", action="store_true")
+    p.add_argument("--no-fetch-optional-docs", dest="fetch_optional_docs", action="store_false")
+    p.add_argument("--fetch-fundamentals", dest="fetch_fundamentals", action="store_true")
+    p.add_argument("--no-fetch-fundamentals", dest="fetch_fundamentals", action="store_false")
+    p.add_argument("--doc-lookback-days", type=int, default=180)
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--sleep-seconds", type=float, default=0.12)
     p.add_argument("--force-refresh", action="store_true")
@@ -148,6 +172,8 @@ def parse_args(argv: list[str] | None = None) -> MVPConfig:
         actor_fsdp_param_offload=False,
         actor_fsdp_optimizer_offload=False,
         ref_fsdp_param_offload=False,
+        fetch_optional_docs=True,
+        fetch_fundamentals=True,
     )
     args = p.parse_args(argv)
     return MVPConfig(**vars(args))
@@ -173,6 +199,13 @@ def main(
     sample_stride: int = 3,
     max_stocks: int = 50,
     max_tasks: int = 8000,
+    max_tool_calls: int = 4,
+    up_quantile: float = 0.70,
+    down_quantile: float = 0.30,
+    pnl_scale: float = 0.03,
+    fetch_optional_docs: bool = True,
+    fetch_fundamentals: bool = True,
+    doc_lookback_days: int = 180,
     seed: int = 7,
     sleep_seconds: float = 0.12,
     force_refresh: bool = False,
@@ -233,6 +266,13 @@ def main(
         sample_stride=sample_stride,
         max_stocks=max_stocks,
         max_tasks=max_tasks,
+        max_tool_calls=max_tool_calls,
+        up_quantile=up_quantile,
+        down_quantile=down_quantile,
+        pnl_scale=pnl_scale,
+        fetch_optional_docs=fetch_optional_docs,
+        fetch_fundamentals=fetch_fundamentals,
+        doc_lookback_days=doc_lookback_days,
         seed=seed,
         sleep_seconds=sleep_seconds,
         force_refresh=force_refresh,
@@ -301,9 +341,18 @@ def main(
         results["train_parquet"] = str(train_path)
         results["valid_parquet"] = str(valid_path)
 
+    if cfg.mode in ("all", "all-train", "export-sft", "print-sft-command"):
+        sft_train_path, sft_valid_path = export_sft_dataset(cfg)
+        results["sft_train_parquet"] = str(sft_train_path)
+        results["sft_valid_parquet"] = str(sft_valid_path)
+
     if cfg.mode in ("all", "all-train", "rule-rollout"):
         metrics_path = run_rule_rollout(cfg)
         results["rule_metrics"] = str(metrics_path)
+
+    if cfg.mode in ("all", "all-train", "print-sft-command"):
+        sft_script = write_sft_command_script(cfg)
+        results["sft_command_file"] = str(sft_script)
 
     if cfg.mode in ("all", "all-train", "print-verl-command"):
         if cfg.write_verl_command:

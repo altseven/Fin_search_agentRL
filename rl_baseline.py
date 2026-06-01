@@ -9,21 +9,65 @@ from typing import Any
 from rl_common import CLASSES, ensure_dirs, log, pd, read_table, require_pandas, save_table
 from rl_config import MVPConfig
 from rl_reward import compute_stock_reward
-from rl_tools import _safe_float, get_market_context, get_price_factors
+from rl_tools import (
+    _safe_float,
+    get_fundamental_snapshot,
+    get_industry_context,
+    get_market_context,
+    get_peer_context,
+    get_price_factors,
+    search_announcements,
+    search_news,
+)
 
 
 def rule_agent_predict(task: dict[str, Any]) -> dict[str, Any]:
     pf = get_price_factors(str(task["ts_code"]), str(task["trade_date"]))
     mc = get_market_context(str(task["trade_date"]))
+    ic = get_industry_context(str(task.get("industry_id", "")), str(task["trade_date"]))
+    pc = get_peer_context(str(task["ts_code"]), str(task["trade_date"]), top_k=5)
+    fs = get_fundamental_snapshot(str(task["ts_code"]), str(task["trade_date"]))
+    anns = search_announcements(str(task["ts_code"]), str(task["trade_date"]), query=str(task.get("company_name", "")), top_k=3)
+    news = search_news(
+        str(task["ts_code"]),
+        str(task["trade_date"]),
+        query=f"{task.get('company_name', '')} {task.get('industry_name', task.get('industry', ''))}",
+        top_k=3,
+    )
     factors = pf.get("factors", {}) if pf.get("status") == "ok" else {}
+    market = mc.get("metrics", {}) if mc.get("status") == "ok" else {}
+    industry = ic.get("metrics", {}) if ic.get("status") == "ok" else {}
+    fundamentals = fs.get("fundamentals", {}) if fs.get("status") == "ok" else {}
 
     momentum = _safe_float(factors.get("momentum_rank"), 0.5) or 0.5
+    ind_momentum = _safe_float(factors.get("momentum_rank_in_industry"), momentum) or momentum
     rs_rank = _safe_float(factors.get("rs_rank"), 0.5) or 0.5
     liq = _safe_float(factors.get("liquidity_rank"), 0.5) or 0.5
     vol = _safe_float(factors.get("vol_rank"), 0.5) or 0.5
     ret_5d = _safe_float(factors.get("ret_5d"), 0.0) or 0.0
-    score = 1.2 * (momentum - 0.5) + 1.0 * (rs_rank - 0.5) + 0.3 * (liq - 0.5) - 0.35 * (vol - 0.5)
+    market_ret = _safe_float(market.get("market_ret_20d"), 0.0) or 0.0
+    industry_ret = _safe_float(industry.get("industry_ret_20d"), 0.0) or 0.0
+    pe_ttm = _safe_float(fundamentals.get("pe_ttm"), 35.0) or 35.0
+    news_sent = 0.0
+    news_results = news.get("results", []) if news.get("status") == "ok" else []
+    if news_results:
+        vals = [_safe_float(x.get("sentiment_score"), 0.0) or 0.0 for x in news_results]
+        news_sent = sum(vals) / max(1, len(vals))
+    ann_count = int(anns.get("result_count", 0) or 0)
+
+    score = (
+        1.0 * (momentum - 0.5)
+        + 0.9 * (ind_momentum - 0.5)
+        + 0.9 * (rs_rank - 0.5)
+        + 0.25 * (liq - 0.5)
+        - 0.30 * (vol - 0.5)
+    )
     score += max(-0.2, min(0.2, ret_5d)) * 1.5
+    score += max(-0.12, min(0.12, industry_ret - market_ret)) * 1.2
+    score += max(-0.4, min(0.4, news_sent)) * 0.25
+    score += min(ann_count, 3) * 0.015
+    if pe_ttm > 80:
+        score -= 0.10
     edge = math.tanh(score)
     p_up = 0.33 + 0.24 * edge
     p_down = 0.33 - 0.24 * edge
@@ -52,9 +96,24 @@ def rule_agent_predict(task: dict[str, Any]) -> dict[str, Any]:
                 "source_id": str(task["trade_date"]),
                 "summary": mc.get("summary", ""),
             },
+            {
+                "direction": "positive" if industry_ret >= market_ret else "negative",
+                "source_type": "industry",
+                "source_id": str(task.get("industry_id", "")),
+                "summary": ic.get("summary", ""),
+            },
+            {
+                "direction": "neutral",
+                "source_type": "fundamental",
+                "source_id": f"{task['ts_code']}_{task['trade_date']}",
+                "summary": fs.get("summary", ""),
+            },
         ],
-        "risk_factors": ["This MVP uses price/market factors only; no verified announcement/news table is loaded."],
-        "search_steps_used": 2,
+        "risk_factors": [
+            "Rule baseline uses deterministic factors and derived point-in-time event documents; it is not an oracle.",
+            f"peer_results={pc.get('result_count', 0)}, announcement_results={ann_count}, news_results={len(news_results)}",
+        ],
+        "search_steps_used": 6,
     }
 
 
@@ -117,7 +176,34 @@ def summarize_predictions(df: "pd.DataFrame") -> dict[str, Any]:
             "n": int(len(sub)),
             "mean_reward": mean_reward,
             "accuracy": acc,
+            "macro_f1": macro_f1(sub["label"].tolist(), sub["prediction"].tolist()),
             "brier": float(brier),
             "mean_rank_ic": float(sum(rank_ics) / len(rank_ics)) if rank_ics else None,
+            "top_bottom_return": top_bottom_return(sub),
         }
     return out
+
+
+def macro_f1(labels: list[str], preds: list[str]) -> float:
+    scores = []
+    for cls in CLASSES:
+        tp = sum(1 for y, p in zip(labels, preds) if y == cls and p == cls)
+        fp = sum(1 for y, p in zip(labels, preds) if y != cls and p == cls)
+        fn = sum(1 for y, p in zip(labels, preds) if y == cls and p != cls)
+        precision = tp / (tp + fp) if (tp + fp) else 0.0
+        recall = tp / (tp + fn) if (tp + fn) else 0.0
+        scores.append(2 * precision * recall / (precision + recall) if (precision + recall) else 0.0)
+    return float(sum(scores) / len(scores))
+
+
+def top_bottom_return(df: "pd.DataFrame") -> float | None:
+    spreads = []
+    for _, g in df.groupby("trade_date"):
+        if len(g) < 5:
+            continue
+        ranked = g.sort_values("alpha_score")
+        k = max(1, int(len(ranked) * 0.3))
+        bottom = ranked.head(k)["future_relative_return"].mean()
+        top = ranked.tail(k)["future_relative_return"].mean()
+        spreads.append(float(top - bottom))
+    return float(sum(spreads) / len(spreads)) if spreads else None

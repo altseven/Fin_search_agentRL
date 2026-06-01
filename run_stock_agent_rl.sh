@@ -272,19 +272,19 @@ def emit_a800_profile(name: str) -> None:
         name=name,
         n_gpus=8,
         rollout_tp=4,
-        train_batch=64,
-        ppo_mini=32,
-        ppo_micro=2,
-        logprob_micro=2,
-        rollout_n=4,
-        max_prompt=3072,
-        max_response=1024,
-        gpu_mem_util=0.70,
-        rollout_max_model_len=4096,
-        rollout_max_num_batched_tokens=16384,
-        agent_workers=8,
-        reward_workers=8,
-        total_epochs=2,
+        train_batch=96,
+        ppo_mini=48,
+        ppo_micro=4,
+        logprob_micro=4,
+        rollout_n=6,
+        max_prompt=4096,
+        max_response=1536,
+        gpu_mem_util=0.78,
+        rollout_max_model_len=5632,
+        rollout_max_num_batched_tokens=24576,
+        agent_workers=16,
+        reward_workers=16,
+        total_epochs=3,
     )
 
 if profile in {"auto", "a800_8gpu"}:
@@ -372,8 +372,12 @@ fi
   --rollout-agent-num-workers "$ROLLOUT_AGENT_NUM_WORKERS" \
   --reward-num-workers "$REWARD_NUM_WORKERS" \
   --total-epochs "$TOTAL_EPOCHS" \
-  --sample-stride 3 \
-  --max-tasks 8000 \
+  --sample-stride 2 \
+  --max-tasks 15000 \
+  --max-tool-calls 4 \
+  --up-quantile 0.70 \
+  --down-quantile 0.30 \
+  --pnl-scale 0.03 \
   --lora-rank 0 \
   --lora-alpha 0 \
   --actor-lr 1e-6 \

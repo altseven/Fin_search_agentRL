@@ -82,6 +82,7 @@ def make_verl_command(cfg: MVPConfig, train_path: Path, valid_path: Path) -> str
     )
     ref_log_prob_max_token_len_per_gpu = cfg.ref_log_prob_max_token_len_per_gpu or total_seq_len * 3
     rollout_log_prob_max_token_len_per_gpu = cfg.rollout_log_prob_max_token_len_per_gpu or total_seq_len * 3
+    max_assistant_turns = max(2, int(cfg.max_tool_calls) + 1)
     lora_overrides = ""
     if cfg.lora_rank > 0:
         lora_overrides = f"""  actor_rollout_ref.model.lora_rank={cfg.lora_rank} \\
@@ -109,6 +110,7 @@ cd "{repo}"
   data.filter_overlong_prompts=True \\
   data.truncation=error \\
   data.return_raw_chat=True \\
+  +data.apply_chat_template_kwargs.enable_thinking=False \\
   actor_rollout_ref.model.path="{model_path}" \\
   +actor_rollout_ref.model.override_config.attn_implementation={cfg.attn_implementation} \\
   actor_rollout_ref.model.use_remove_padding={str(cfg.use_remove_padding).lower()} \\
@@ -142,8 +144,8 @@ cd "{repo}"
   actor_rollout_ref.rollout.multi_turn.enable=True \\
   actor_rollout_ref.rollout.multi_turn.format=hermes \\
   actor_rollout_ref.rollout.multi_turn.function_tool_path="{tool_path}" \\
-  actor_rollout_ref.rollout.multi_turn.max_assistant_turns=4 \\
-  actor_rollout_ref.rollout.multi_turn.max_tool_response_length=512 \\
+  actor_rollout_ref.rollout.multi_turn.max_assistant_turns={max_assistant_turns} \\
+  actor_rollout_ref.rollout.multi_turn.max_tool_response_length=768 \\
   actor_rollout_ref.rollout.multi_turn.tokenization_sanity_check_mode=ignore_strippable \\
   actor_rollout_ref.rollout.agent.num_workers={cfg.rollout_agent_num_workers} \\
   actor_rollout_ref.rollout.agent.default_agent_loop=tool_agent \\

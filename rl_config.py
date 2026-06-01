@@ -34,6 +34,13 @@ class MVPConfig:
     sample_stride: int = 3
     max_stocks: int = 50
     max_tasks: int = 8000
+    max_tool_calls: int = 4
+    up_quantile: float = 0.70
+    down_quantile: float = 0.30
+    pnl_scale: float = 0.03
+    fetch_optional_docs: bool = True
+    fetch_fundamentals: bool = True
+    doc_lookback_days: int = 180
     seed: int = 7
     sleep_seconds: float = 0.12
     force_refresh: bool = False

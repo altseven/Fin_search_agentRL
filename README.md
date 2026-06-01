@@ -94,10 +94,24 @@ Advanced direct Python entry:
 python3 stock_agent_rl_mvp.py --mode all-train --tushare-token "your_token"
 ```
 
+Current full-flow version builds:
+
+- point-in-time tasks and hidden labels for T+5 relative-return classification
+- price, market, industry, peer, fundamental, announcement, and news/event tool tables
+- veRL multi-turn GRPO parquet data and command script
+- optional rule-trajectory SFT parquet data and SFT command script
+- rule baseline metrics: reward, accuracy, Macro-F1, Brier, Rank IC, and top-bottom return
+
 If you only want to build data and generate the training script:
 
 ```bash
 python3 stock_agent_rl_mvp.py --mode all --tushare-token "your_token"
+```
+
+To generate only the cold-start SFT files and command:
+
+```bash
+python3 stock_agent_rl_mvp.py --mode print-sft-command --tushare-token "your_token"
 ```
 
 If training was interrupted and you want to run the latest generated training script:
