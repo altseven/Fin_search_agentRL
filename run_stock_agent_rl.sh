@@ -18,6 +18,7 @@ Options:
   --env-mode MODE      auto|conda|system. Default: auto
   --env-name NAME       Conda env name. Default: stockverl
   --python-bin PATH     Python executable for system mode. Default: python3.10/python3/python
+  --requirements PATH   Locked requirements file. Default: requirements-stockverl.txt
   --profile PROFILE     auto|a800_8gpu|debug. Default: auto
   --no-setup            Skip environment setup and model download
   --no-cn-mirror        Do not use the Tsinghua PyPI mirror during setup
@@ -43,6 +44,7 @@ echo "== Logging to $LOG_FILE =="
 ENV_NAME="${ENV_NAME:-stockverl}"
 ENV_MODE="${ENV_MODE:-auto}"
 PYTHON_BIN="${PYTHON_BIN:-}"
+REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-requirements-stockverl.txt}"
 PROFILE="auto"
 RUN_SETUP=1
 USE_CN_MIRROR=1
@@ -67,6 +69,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --python-bin)
       PYTHON_BIN="$2"
+      shift 2
+      ;;
+    --requirements)
+      REQUIREMENTS_FILE="$2"
       shift 2
       ;;
     --profile)
@@ -123,7 +129,7 @@ case "$ENV_MODE" in
 esac
 
 if [[ "$RUN_SETUP" == "1" ]]; then
-  SETUP_ARGS=(--env-mode "$ENV_MODE" --env-name "$ENV_NAME" --torch-cuda cu128)
+  SETUP_ARGS=(--env-mode "$ENV_MODE" --env-name "$ENV_NAME" --torch-cuda cu128 --requirements "$REQUIREMENTS_FILE")
   if [[ -n "$PYTHON_BIN" ]]; then
     SETUP_ARGS+=(--python-bin "$PYTHON_BIN")
   fi

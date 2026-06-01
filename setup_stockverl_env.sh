@@ -22,6 +22,8 @@ Options:
   --install-torch auto|yes|no PyTorch install policy. Default: auto
   --torch-cuda cu121|cu124|cu126|cu128|cpu
                               PyTorch wheel index flavor. Default: cu128
+  --torch-version VERSION     Torch version. Default: 2.9.0
+  --requirements PATH         Locked requirements file. Default: requirements-stockverl.txt
   --cn-mirror                 Use Tsinghua PyPI mirror for normal pip packages
   --install-flash-attn        Try to install flash-attn. Not needed for current sdpa default
   --download-model            Download Qwen/Qwen3-4B to model/Qwen3-4B via ModelScope
@@ -43,6 +45,10 @@ PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 INSTALL_TORCH="${INSTALL_TORCH:-auto}"
 TORCH_CUDA="${TORCH_CUDA:-cu128}"
+TORCH_VERSION="${TORCH_VERSION:-2.9.0}"
+TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.24.0}"
+TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.9.0}"
+REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-requirements-stockverl.txt}"
 USE_CN_MIRROR="${USE_CN_MIRROR:-0}"
 INSTALL_FLASH_ATTN="${INSTALL_FLASH_ATTN:-0}"
 DOWNLOAD_MODEL="${DOWNLOAD_MODEL:-0}"
@@ -73,6 +79,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --torch-cuda)
       TORCH_CUDA="$2"
+      shift 2
+      ;;
+    --torch-version)
+      TORCH_VERSION="$2"
+      shift 2
+      ;;
+    --requirements)
+      REQUIREMENTS_FILE="$2"
       shift 2
       ;;
     --cn-mirror)
@@ -139,7 +153,8 @@ echo "Repo: $REPO_ROOT"
 echo "Env mode: $ENV_MODE"
 echo "Conda env: $ENV_NAME"
 echo "Python: $PYTHON_VERSION"
-echo "Install torch: $INSTALL_TORCH ($TORCH_CUDA)"
+echo "Install torch: $INSTALL_TORCH ($TORCH_CUDA, torch==$TORCH_VERSION)"
+echo "Requirements lock: $REQUIREMENTS_FILE"
 echo "Use CN mirror: $USE_CN_MIRROR"
 echo "Install flash-attn: $INSTALL_FLASH_ATTN"
 echo
@@ -249,12 +264,31 @@ pip_install() {
 echo "== Upgrading packaging tools =="
 pip_install -U pip setuptools wheel packaging ninja
 
+if [[ "$REQUIREMENTS_FILE" = /* ]]; then
+  REQUIREMENTS_PATH="$REQUIREMENTS_FILE"
+else
+  REQUIREMENTS_PATH="$REPO_ROOT/$REQUIREMENTS_FILE"
+fi
+if [[ ! -f "$REQUIREMENTS_PATH" ]]; then
+  echo "Requirements lock file not found: $REQUIREMENTS_PATH" >&2
+  exit 1
+fi
+
 torch_import_ok=0
-if "$PYTHON_CMD" - <<'PY'
+if TORCH_VERSION="$TORCH_VERSION" "$PYTHON_CMD" - <<'PY'
+import os
+import sys
+
 try:
     import torch
     print("torch already importable:", torch.__version__, "cuda:", torch.cuda.is_available())
+    expected = os.environ["TORCH_VERSION"]
+    installed = torch.__version__.split("+", 1)[0]
+    if installed != expected:
+        print(f"torch version mismatch: expected {expected}, got {installed}")
+        raise SystemExit(1)
 except Exception as exc:
+    print("torch check failed:", exc)
     raise SystemExit(1)
 PY
 then
@@ -268,7 +302,11 @@ if [[ "$INSTALL_TORCH" == "yes" || ( "$INSTALL_TORCH" == "auto" && "$torch_impor
   else
     TORCH_INDEX_URL="https://download.pytorch.org/whl/$TORCH_CUDA"
   fi
-  "$PYTHON_CMD" -m pip install "${PIP_BREAK_ARGS[@]}" torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
+  "$PYTHON_CMD" -m pip install "${PIP_BREAK_ARGS[@]}" \
+    "torch==$TORCH_VERSION" \
+    "torchvision==$TORCHVISION_VERSION" \
+    "torchaudio==$TORCHAUDIO_VERSION" \
+    --index-url "$TORCH_INDEX_URL"
 elif [[ "$INSTALL_TORCH" == "no" ]]; then
   echo "== Skipping PyTorch install by request =="
 else
@@ -276,13 +314,49 @@ else
 fi
 
 echo "== Installing project runtime packages =="
-pip_install tushare pandas "pyarrow>=19.0.0" datasets modelscope
+pip_install -U --upgrade-strategy eager -r "$REQUIREMENTS_PATH"
 
-echo "== Installing verl-main with vLLM extra =="
+echo "== Installing verl-main =="
 cd "$REPO_ROOT/verl-main"
-pip_install -e ".[vllm]"
-pip_install "nvidia-ml-py>=12.560.30" "fastapi>=0.115.0" "uvicorn>=0.30.0" "TransferQueue==0.1.7"
+pip_install -e . --no-deps
 cd "$REPO_ROOT"
+
+echo "== Re-applying locked runtime stack =="
+pip_install -U --upgrade-strategy eager -r "$REQUIREMENTS_PATH"
+
+echo "== Locked package verification =="
+REQUIREMENTS_PATH="$REQUIREMENTS_PATH" "$PYTHON_CMD" - <<'PY'
+import os
+from importlib.metadata import PackageNotFoundError, version
+
+from packaging.requirements import Requirement
+
+path = os.environ["REQUIREMENTS_PATH"]
+mismatches = []
+for raw in open(path, encoding="utf-8"):
+    line = raw.split("#", 1)[0].strip()
+    if not line:
+        continue
+    req = Requirement(line)
+    expected = None
+    for spec in req.specifier:
+        if spec.operator == "==":
+            expected = spec.version
+            break
+    if expected is None:
+        continue
+    try:
+        installed = version(req.name)
+    except PackageNotFoundError:
+        mismatches.append(f"{req.name}: missing, expected {expected}")
+        continue
+    if installed != expected:
+        mismatches.append(f"{req.name}: installed {installed}, expected {expected}")
+    else:
+        print(f"{req.name}: {installed}")
+if mismatches:
+    raise SystemExit("Locked package mismatch:\n" + "\n".join(mismatches))
+PY
 
 if [[ "$INSTALL_FLASH_ATTN" == "1" ]]; then
   echo "== Installing flash-attn =="

@@ -39,7 +39,7 @@ bash run_stock_agent_rl.sh "your_token"
 '
 ```
 
-它会自动安装依赖、下载 `Qwen/Qwen3-4B`、检测 8 张 70GB+ GPU，然后启动全参数 GRPO 训练。脚本默认 `--env-mode auto`：如果镜像里有 conda 就复用/创建 `stockverl` 环境；如果没有 conda，就直接使用镜像自带的 `python3.10`/`python3` 安装依赖并运行。默认 profile 是 8 卡 A800：`train_batch_size=64`、`rollout_n=4`、`rollout_tp=4`、`max_prompt_length=3072`、`max_response_length=1024`，LoRA 默认关闭。
+它会按 `requirements-stockverl.txt` 锁定版本安装依赖、下载 `Qwen/Qwen3-4B`、检测 8 张 70GB+ GPU，然后启动全参数 GRPO 训练。脚本默认 `--env-mode auto`：如果镜像里有 conda 就复用/创建 `stockverl` 环境；如果没有 conda，就直接使用镜像自带的 `python3.10`/`python3` 安装依赖并运行。默认 profile 是 8 卡 A800：`train_batch_size=64`、`rollout_n=4`、`rollout_tp=4`、`max_prompt_length=3072`、`max_response_length=1024`，LoRA 默认关闭。
 
 统一入口会把所有 stdout/stderr 同步写到项目根目录的 `output.log`，每次运行都会覆盖旧日志。云服务器上任务结束后可以直接查看：
 
