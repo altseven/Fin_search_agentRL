@@ -7,16 +7,6 @@ __pycache__/
 # Local credentials/config. Copy local_config.example.py to local_config.py.
 local_config.py
 
-# Runtime data. Keep only reusable parquet caches in git when explicitly added.
-data/*
-!data/.gitkeep
-!data/raw/
-!data/processed/
-data/raw/*
-data/processed/*
-!data/raw/*.parquet
-!data/processed/*.parquet
-
 # Local model weights. Do not commit downloaded Qwen/HF/ModelScope models.
 model/*
 !model/.gitkeep
