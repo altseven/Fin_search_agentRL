@@ -28,6 +28,9 @@ Options:
   --max-stocks N           Number of SSE50 stocks to use. Default: 20
   --max-tasks N            Max RL tasks. Default: 800
   --sample-stride N        Sampling stride. Default: 8
+  --min-tool-calls N       Require/reward at least N tool calls. Default: 2
+  --tool-use-bonus X       Reward per required tool call. Default: 0.08
+  --missing-tool-penalty X Penalty if required tool calls are missing. Default: 0.30
   --no-setup               Skip environment setup
   --no-download-model      Skip model download in setup
   --no-cn-mirror           Do not prefer China mirrors
@@ -65,6 +68,9 @@ MODEL_SIZE_LIMIT_MIB="${MODEL_SIZE_LIMIT_MIB:-6000}"
 MAX_STOCKS="${MAX_STOCKS:-20}"
 MAX_TASKS="${MAX_TASKS:-800}"
 SAMPLE_STRIDE="${SAMPLE_STRIDE:-8}"
+MIN_TOOL_CALLS="${MIN_TOOL_CALLS:-2}"
+TOOL_USE_BONUS="${TOOL_USE_BONUS:-0.08}"
+MISSING_TOOL_PENALTY="${MISSING_TOOL_PENALTY:-0.30}"
 RUN_SETUP=1
 DOWNLOAD_MODEL=1
 USE_CN_MIRROR=1
@@ -125,6 +131,18 @@ while [[ $# -gt 0 ]]; do
       SAMPLE_STRIDE="$2"
       shift 2
       ;;
+    --min-tool-calls)
+      MIN_TOOL_CALLS="$2"
+      shift 2
+      ;;
+    --tool-use-bonus)
+      TOOL_USE_BONUS="$2"
+      shift 2
+      ;;
+    --missing-tool-penalty)
+      MISSING_TOOL_PENALTY="$2"
+      shift 2
+      ;;
     --no-setup)
       RUN_SETUP=0
       shift
@@ -165,6 +183,7 @@ echo "Model id: $MODEL_ID"
 echo "Model dir: $MODEL_DIR"
 echo "Model size limit: ${MODEL_SIZE_LIMIT_MIB} MiB"
 echo "Data smoke size: max_stocks=$MAX_STOCKS, max_tasks=$MAX_TASKS, sample_stride=$SAMPLE_STRIDE"
+echo "Tool-call reward: min_tool_calls=$MIN_TOOL_CALLS, bonus=$TOOL_USE_BONUS, missing_penalty=$MISSING_TOOL_PENALTY"
 if [[ -z "$TOKEN" ]]; then
   echo "Tushare token: not passed; stock_agent_rl_mvp.py will try local_config.py"
 else
@@ -287,6 +306,9 @@ bash run_stock_agent_rl.sh "${RUN_ARGS[@]}" -- \
   --max-stocks "$MAX_STOCKS" \
   --max-tasks "$MAX_TASKS" \
   --sample-stride "$SAMPLE_STRIDE" \
+  --min-tool-calls "$MIN_TOOL_CALLS" \
+  --tool-use-bonus "$TOOL_USE_BONUS" \
+  --missing-tool-penalty "$MISSING_TOOL_PENALTY" \
   --no-fetch-fundamentals \
   --train-batch-size 4 \
   --ppo-mini-batch-size 4 \

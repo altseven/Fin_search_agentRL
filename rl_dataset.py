@@ -50,6 +50,10 @@ def normalize_tool_selection(value: Any) -> list[str]:
 
 
 def make_prompt(row: dict[str, Any]) -> list[dict[str, str]]:
+    try:
+        min_tool_calls = max(0, int(row.get("min_tool_calls", 0) or 0))
+    except Exception:
+        min_tool_calls = 0
     system = (
         "You are a financial search prediction agent. Your task is to predict the "
         "future relative return direction of one A-share stock using only point-in-time "
@@ -62,6 +66,14 @@ def make_prompt(row: dict[str, Any]) -> list[dict[str, str]]:
     )
     tools = normalize_tool_selection(row.get("tools"))
     tool_lines = "\n".join(f"- {name}" for name in tools)
+    required_tool_text = ""
+    if min_tool_calls > 0:
+        required_tool_text = (
+            f"Required search behavior: before the final JSON, call at least {min_tool_calls} function tools. "
+            "Start with get_price_factors and get_market_context when available; then use industry, peer, "
+            "fundamental, announcement, or news tools if useful. If a tool returns no data, record that fact "
+            "briefly in evidence_summary or risk_factors and continue instead of inventing data.\n"
+        )
     user = (
         f"Predict the relative return direction for stock {row.get('ts_code')} "
         f"({row.get('company_name', row.get('name', ''))}) over the next {row.get('horizon')} trading days.\n"
@@ -74,6 +86,7 @@ def make_prompt(row: dict[str, Any]) -> list[dict[str, str]]:
         f"Available tools:\n{tool_lines}\n\n"
         "Use the tools actively but stay within the budget. A good trajectory usually checks price factors, "
         "industry/market context, and at least one document or fundamental source when available. "
+        f"{required_tool_text}"
         "Labels and future returns are hidden from you.\n\n"
         "Final JSON schema:\n"
         "{\n"
@@ -101,6 +114,7 @@ def export_verl_dataset(cfg: MVPConfig) -> tuple[Path, Path]:
     rows: list[dict[str, Any]] = []
     for _, row in df.iterrows():
         item = row.to_dict()
+        item["min_tool_calls"] = int(cfg.min_tool_calls)
         gt = {
             "label": item["label"],
             "future_relative_return": float(item["future_relative_return"]),
@@ -135,6 +149,9 @@ def export_verl_dataset(cfg: MVPConfig) -> tuple[Path, Path]:
                     "industry_return": float(item.get("industry_future_return", 0.0) or 0.0),
                     "relative_benchmark": item.get("relative_benchmark", "market"),
                     "max_tool_calls": int(item.get("max_tool_calls", cfg.max_tool_calls)),
+                    "min_tool_calls": int(cfg.min_tool_calls),
+                    "tool_use_bonus": float(cfg.tool_use_bonus),
+                    "missing_tool_penalty": float(cfg.missing_tool_penalty),
                     "pnl_scale": float(cfg.pnl_scale),
                     "tool_selection": tools,
                 },

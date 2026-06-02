@@ -3,6 +3,7 @@
 __pycache__/
 *.py[cod]
 .cache/
+.matplotlib_cache/
 
 # Local credentials/config. Copy local_config.example.py to local_config.py.
 local_config.py

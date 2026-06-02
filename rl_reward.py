@@ -22,6 +22,8 @@ REWARD_DEFAULTS: dict[str, Any] = {
     "format_reward": 0.0,
     "search_cost": 0.0,
     "turn_cost": 0.0,
+    "tool_use_reward": 0.0,
+    "missing_tool_penalty": 0.0,
     "invalid_tool_penalty": 0.0,
     "future_time_penalty": 0.0,
     "num_tool_calls": 0.0,
@@ -178,7 +180,26 @@ def compute_stock_reward(answer: dict | None, extra_info: dict[str, Any]) -> dic
     if num_tool_calls <= 0 and num_turns_i > 0:
         num_tool_calls = max(0, (num_turns_i - 2) // 2)
     max_tool_calls = max(0, int(extra_info.get("max_tool_calls", 4) or 4))
-    search_cost = -0.02 * num_tool_calls
+
+    min_tool_calls = max(0, int(extra_info.get("min_tool_calls", 0) or 0))
+    try:
+        tool_use_bonus = float(extra_info.get("tool_use_bonus", 0.0) or 0.0)
+    except Exception:
+        tool_use_bonus = 0.0
+    try:
+        missing_tool_penalty_scale = float(extra_info.get("missing_tool_penalty", 0.0) or 0.0)
+    except Exception:
+        missing_tool_penalty_scale = 0.0
+    tool_use_reward = tool_use_bonus * min(num_tool_calls, max(1, min_tool_calls))
+    missing_tool_penalty = 0.0
+    if min_tool_calls > 0 and num_tool_calls < min_tool_calls:
+        missing = min_tool_calls - num_tool_calls
+        missing_tool_penalty = -abs(missing_tool_penalty_scale) * missing / max(1, min_tool_calls)
+
+    if min_tool_calls > 0:
+        search_cost = -0.01 * max(0, num_tool_calls - min_tool_calls)
+    else:
+        search_cost = -0.02 * num_tool_calls
     if num_tool_calls > max_tool_calls:
         search_cost -= 0.2 * (num_tool_calls - max_tool_calls)
     invalid_tool_calls = int(extra_info.get("num_invalid_tool_calls", 0) or 0)
@@ -194,6 +215,8 @@ def compute_stock_reward(answer: dict | None, extra_info: dict[str, Any]) -> dic
         + 0.20 * pnl_reward
         + 0.05 * evidence_reward
         + format_reward
+        + tool_use_reward
+        + missing_tool_penalty
         + search_cost
         + invalid_tool_penalty
         + future_time_penalty
@@ -212,6 +235,8 @@ def compute_stock_reward(answer: dict | None, extra_info: dict[str, Any]) -> dic
             "format_reward": float(format_reward),
             "search_cost": float(search_cost),
             "turn_cost": float(turn_cost),
+            "tool_use_reward": float(tool_use_reward),
+            "missing_tool_penalty": float(missing_tool_penalty),
             "invalid_tool_penalty": float(invalid_tool_penalty),
             "future_time_penalty": float(future_time_penalty),
             "num_tool_calls": float(num_tool_calls),

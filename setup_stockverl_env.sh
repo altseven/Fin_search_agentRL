@@ -671,6 +671,7 @@ mods = [
     "transformers",
     "pandas",
     "pyarrow",
+    "matplotlib",
     "datasets",
     "tushare",
     "modelscope",

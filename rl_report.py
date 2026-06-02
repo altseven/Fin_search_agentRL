@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import ast
 import csv
-import html
 import json
 import math
+import os
 import re
 import textwrap
 import time
@@ -24,7 +24,20 @@ def find_latest_run_dir(result_dir: str | Path = DEFAULT_RESULT_DIR) -> Path:
     candidates = [p for p in base.glob("*_result*") if p.is_dir()]
     if not candidates:
         raise FileNotFoundError(f"No run directories found under {base}")
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+    def run_quality(path: Path) -> int:
+        score = 0
+        if (path / "verl" / "training_metrics.jsonl").exists():
+            score += 4
+        if (path / "rollouts" / "rule_baseline_metrics.json").exists():
+            score += 3
+        if (path / "verl" / "train.parquet").exists() or (path / "verl" / "valid.parquet").exists():
+            score += 2
+        if (path / "report" / "stock_agent_rl_report.pdf").exists():
+            score += 1
+        return score
+
+    candidates.sort(key=lambda p: (run_quality(p), p.stat().st_mtime), reverse=True)
     return candidates[0]
 
 
@@ -125,6 +138,7 @@ def generate_report_for_run(
         "notes": [
             "Reward progress is computed from verl file logger JSONL when available, then from output logs as fallback.",
             "If no RL metric rows exist, the report still summarizes data and rule-baseline reward.",
+            "Figures are exported as PDF files under report/figures for presentation-quality rendering.",
         ],
     }
     manifest_path = report_dir / "report_manifest.json"
@@ -545,97 +559,500 @@ def _write_charts(
     metric_rows: list[dict[str, Any]],
 ) -> dict[str, Path]:
     charts: dict[str, Path] = {}
-    splits = [row["split"] for row in baseline_rows]
-    charts["baseline_reward_svg"] = _write_bar_svg(
-        figures_dir / "baseline_mean_reward_by_split.svg",
-        "Rule Baseline Mean Reward",
-        splits,
-        {"mean_reward": [_safe_float(row.get("mean_reward"), 0.0) or 0.0 for row in baseline_rows]},
-        y_label="reward",
+    charts["workflow_pdf"] = _save_chart_pdf(figures_dir / "workflow.pdf", lambda: _fig_workflow())
+    charts["baseline_reward_pdf"] = _save_chart_pdf(
+        figures_dir / "baseline_mean_reward_by_split.pdf",
+        lambda: _fig_baseline_reward(baseline_rows),
     )
-    charts["baseline_accuracy_f1_svg"] = _write_bar_svg(
-        figures_dir / "baseline_accuracy_macro_f1.svg",
-        "Rule Baseline Accuracy and Macro-F1",
-        splits,
-        {
-            "accuracy": [_safe_float(row.get("accuracy"), 0.0) or 0.0 for row in baseline_rows],
-            "macro_f1": [_safe_float(row.get("macro_f1"), 0.0) or 0.0 for row in baseline_rows],
-        },
-        y_label="score",
+    charts["baseline_accuracy_f1_pdf"] = _save_chart_pdf(
+        figures_dir / "baseline_accuracy_macro_f1.pdf",
+        lambda: _fig_baseline_accuracy_f1(baseline_rows),
     )
-    charts["baseline_rank_spread_svg"] = _write_bar_svg(
-        figures_dir / "baseline_rank_ic_top_bottom.svg",
-        "Rule Baseline Rank IC and Top-Bottom Return",
-        splits,
-        {
-            "mean_rank_ic": [_safe_float(row.get("mean_rank_ic"), 0.0) or 0.0 for row in baseline_rows],
-            "top_bottom_return": [_safe_float(row.get("top_bottom_return"), 0.0) or 0.0 for row in baseline_rows],
-        },
-        y_label="value",
+    charts["baseline_rank_spread_pdf"] = _save_chart_pdf(
+        figures_dir / "baseline_rank_ic_top_bottom.pdf",
+        lambda: _fig_baseline_rank_spread(baseline_rows),
     )
-    charts["label_distribution_svg"] = _write_count_group_svg(
-        figures_dir / "label_distribution.svg", "Task Label Distribution", label_rows, group_col="label"
+    charts["label_distribution_pdf"] = _save_chart_pdf(
+        figures_dir / "label_distribution.pdf",
+        lambda: _fig_count_group("Task Label Distribution", label_rows, "label"),
     )
-    charts["prediction_distribution_svg"] = _write_count_group_svg(
-        figures_dir / "prediction_distribution.svg", "Rule Prediction Distribution", prediction_rows, group_col="prediction"
+    charts["prediction_distribution_pdf"] = _save_chart_pdf(
+        figures_dir / "prediction_distribution.pdf",
+        lambda: _fig_count_group("Rule Prediction Distribution", prediction_rows, "prediction"),
     )
-    if predictions is not None and not predictions.empty and "reward" in predictions:
-        reward_values = [_safe_float(v) for v in predictions["reward"].tolist()]
-        charts["reward_histogram_svg"] = _write_histogram_svg(
-            figures_dir / "rule_reward_histogram.svg",
-            "Rule Baseline Sample Reward Distribution",
-            [v for v in reward_values if v is not None],
-            bins=24,
-        )
-    else:
-        charts["reward_histogram_svg"] = _write_placeholder_svg(
-            figures_dir / "rule_reward_histogram.svg", "Rule Baseline Sample Reward Distribution", "No prediction rows yet."
-        )
-    if (
-        predictions is not None
-        and not predictions.empty
-        and "alpha_score" in predictions
-        and "future_relative_return" in predictions
-    ):
-        points = [
-            (_safe_float(row.get("alpha_score")), _safe_float(row.get("future_relative_return")))
-            for _, row in predictions.iterrows()
-        ]
-        points = [(x, y) for x, y in points if x is not None and y is not None]
-        charts["alpha_vs_return_svg"] = _write_scatter_svg(
-            figures_dir / "alpha_score_vs_future_relative_return.svg",
-            "Rule Alpha Score vs Future Relative Return",
-            points,
-            x_label="alpha_score",
-            y_label="future_relative_return",
-        )
-    else:
-        charts["alpha_vs_return_svg"] = _write_placeholder_svg(
-            figures_dir / "alpha_score_vs_future_relative_return.svg",
-            "Rule Alpha Score vs Future Relative Return",
-            "No alpha/return prediction rows yet.",
-        )
-    charts["rl_reward_curve_svg"] = _write_rl_reward_curve_svg(
-        figures_dir / "rl_reward_curve.svg", metric_rows, reward_progress_rows
+    charts["reward_histogram_pdf"] = _save_chart_pdf(
+        figures_dir / "rule_reward_histogram.pdf",
+        lambda: _fig_rule_reward_histogram(predictions),
     )
-    charts["baseline_vs_rl_reward_svg"] = _write_baseline_vs_rl_svg(
-        figures_dir / "baseline_vs_rl_reward.svg", baseline_rows, reward_progress_rows
+    charts["alpha_vs_return_pdf"] = _save_chart_pdf(
+        figures_dir / "alpha_score_vs_future_relative_return.pdf",
+        lambda: _fig_alpha_vs_return(predictions),
+    )
+    charts["rl_reward_curve_pdf"] = _save_chart_pdf(
+        figures_dir / "rl_reward_curve.pdf",
+        lambda: _fig_rl_reward_curve(metric_rows, reward_progress_rows),
+    )
+    charts["baseline_vs_rl_reward_pdf"] = _save_chart_pdf(
+        figures_dir / "baseline_vs_rl_reward.pdf",
+        lambda: _fig_baseline_vs_rl_reward(baseline_rows, reward_progress_rows),
+    )
+    charts["tool_usage_pdf"] = _save_chart_pdf(
+        figures_dir / "tool_usage_over_training.pdf",
+        lambda: _fig_tool_usage(metric_rows),
+    )
+    charts["reward_components_pdf"] = _save_chart_pdf(
+        figures_dir / "reward_components_over_training.pdf",
+        lambda: _fig_reward_components(metric_rows),
+    )
+    charts["optimization_health_pdf"] = _save_chart_pdf(
+        figures_dir / "optimization_health_metrics.pdf",
+        lambda: _fig_optimization_health(metric_rows),
     )
     return charts
 
 
-def _svg_start(width: int, height: int) -> str:
-    return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-        f'viewBox="0 0 {width} {height}">\n'
-        '<rect width="100%" height="100%" fill="#ffffff"/>\n'
+def _get_matplotlib():
+    cache_dir = Path(__file__).resolve().parent / ".cache" / "matplotlib"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("MPLCONFIGDIR", str(cache_dir))
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    plt.rcParams.update(
+        {
+            "font.family": "DejaVu Sans",
+            "axes.titlesize": 15,
+            "axes.labelsize": 11,
+            "xtick.labelsize": 9,
+            "ytick.labelsize": 9,
+            "legend.fontsize": 9,
+            "figure.titlesize": 16,
+            "figure.max_open_warning": 0,
+        }
+    )
+    return plt, PdfPages
+
+
+def _save_chart_pdf(path: Path, fig_factory: Any) -> Path:
+    plt, _ = _get_matplotlib()
+    fig = fig_factory()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, format="pdf", bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def _blank_figure(title: str, message: str):
+    plt, _ = _get_matplotlib()
+    fig, ax = plt.subplots(figsize=(11, 6.2))
+    ax.axis("off")
+    fig.suptitle(title, y=0.94, fontweight="bold")
+    ax.text(0.5, 0.52, message, ha="center", va="center", fontsize=13, color="#4b5563", wrap=True)
+    return fig
+
+
+def _style_axis(ax: Any, title: str, x_label: str = "", y_label: str = "", note: str = "") -> None:
+    ax.set_title(title, loc="left", fontweight="bold", pad=12)
+    if x_label:
+        ax.set_xlabel(x_label)
+    if y_label:
+        ax.set_ylabel(y_label)
+    ax.grid(True, axis="y", color="#e5e7eb", linewidth=0.8)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    if note:
+        ax.text(
+            0,
+            -0.20,
+            note,
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            color="#4b5563",
+            wrap=True,
+        )
+
+
+def _fig_workflow():
+    plt, _ = _get_matplotlib()
+    fig, ax = plt.subplots(figsize=(11.5, 6.5))
+    ax.axis("off")
+    fig.suptitle("Stock Search-Agent RL Workflow", y=0.96, fontweight="bold")
+    nodes = [
+        ("Tushare cache", "SSE50 universe, daily, adj factors,\ndaily_basic, index data, trade calendar"),
+        ("Point-in-time tables", "factor_snapshot, market_context,\nindustry_context, peer_context,\nfundamental_snapshot, announcements, news"),
+        ("RL task construction", "as_of date + hidden future label\nup / neutral / down from future relative return"),
+        ("Tool agent rollout", "Qwen policy can call local tools\nthen outputs strict prediction JSON"),
+        ("Verifiable reward", "direction, probability, Brier, PnL,\nevidence/tool use, penalties"),
+        ("GRPO update", "verl updates policy; compare reward\nbefore/after and monitor tool usage"),
+        ("Mentor report", "PDF charts/tables show data quality,\nreward improvement, tool behavior, stability"),
+    ]
+    xs = [0.08, 0.36, 0.64, 0.08, 0.36, 0.64, 0.36]
+    ys = [0.76, 0.76, 0.76, 0.42, 0.42, 0.42, 0.16]
+    colors = ["#dbeafe", "#e0f2fe", "#ecfdf5", "#fef3c7", "#fee2e2", "#ede9fe", "#f3f4f6"]
+    for idx, ((title, body), x, y, color) in enumerate(zip(nodes, xs, ys, colors)):
+        ax.text(
+            x,
+            y,
+            f"{idx + 1}. {title}\n{body}",
+            transform=ax.transAxes,
+            ha="left",
+            va="center",
+            fontsize=10.5,
+            bbox=dict(boxstyle="round,pad=0.55", facecolor=color, edgecolor="#6b7280", linewidth=1.0),
+        )
+    arrows = [((0.27, 0.76), (0.34, 0.76)), ((0.55, 0.76), (0.62, 0.76)), ((0.68, 0.68), (0.20, 0.50)), ((0.27, 0.42), (0.34, 0.42)), ((0.55, 0.42), (0.62, 0.42)), ((0.70, 0.35), (0.49, 0.23))]
+    for start, end in arrows:
+        ax.annotate("", xy=end, xytext=start, xycoords=ax.transAxes, arrowprops=dict(arrowstyle="->", color="#374151", lw=1.5))
+    ax.text(
+        0.04,
+        0.04,
+        "How to read: a good run should show reward increasing, tool-call metrics above zero when tool use is required, "
+        "valid/test metrics not collapsing, and stable optimization diagnostics.",
+        transform=ax.transAxes,
+        fontsize=10,
+        color="#374151",
+        wrap=True,
+    )
+    return fig
+
+
+def _fig_baseline_reward(baseline_rows: list[dict[str, Any]]):
+    splits = [str(row.get("split")) for row in baseline_rows]
+    values = [_safe_float(row.get("mean_reward"), 0.0) or 0.0 for row in baseline_rows]
+    return _fig_bar_single(
+        "Rule Baseline Mean Reward by Split",
+        splits,
+        values,
+        "Data split",
+        "Mean reward",
+        "This is the non-RL reference. RL should improve from its own first reward and ideally approach or exceed this rule baseline.",
     )
 
 
-def _svg_text(x: float, y: float, text: Any, size: int = 13, color: str = "#111827", anchor: str = "start") -> str:
-    return (
-        f'<text x="{x:.1f}" y="{y:.1f}" font-family="Arial, Helvetica, sans-serif" '
-        f'font-size="{size}" fill="{color}" text-anchor="{anchor}">{html.escape(str(text))}</text>\n'
+def _fig_baseline_accuracy_f1(baseline_rows: list[dict[str, Any]]):
+    splits = [str(row.get("split")) for row in baseline_rows]
+    series = {
+        "accuracy": [_safe_float(row.get("accuracy"), 0.0) or 0.0 for row in baseline_rows],
+        "macro_f1": [_safe_float(row.get("macro_f1"), 0.0) or 0.0 for row in baseline_rows],
+    }
+    return _fig_group_bar(
+        "Rule Baseline Classification Metrics",
+        splits,
+        series,
+        "Data split",
+        "Score",
+        "Accuracy shows direct label hit-rate. Macro-F1 checks whether one class dominates the predictions.",
+    )
+
+
+def _fig_baseline_rank_spread(baseline_rows: list[dict[str, Any]]):
+    splits = [str(row.get("split")) for row in baseline_rows]
+    series = {
+        "mean_rank_ic": [_safe_float(row.get("mean_rank_ic"), 0.0) or 0.0 for row in baseline_rows],
+        "top_bottom_return": [_safe_float(row.get("top_bottom_return"), 0.0) or 0.0 for row in baseline_rows],
+    }
+    return _fig_group_bar(
+        "Rule Baseline Ranking Metrics",
+        splits,
+        series,
+        "Data split",
+        "Value",
+        "Positive Rank IC means scores rank better future relative returns. Positive top-bottom return means high-score stocks outperform low-score stocks.",
+    )
+
+
+def _fig_bar_single(title: str, labels: list[str], values: list[float], x_label: str, y_label: str, note: str):
+    plt, _ = _get_matplotlib()
+    if not labels:
+        return _blank_figure(title, "No rows available.")
+    fig, ax = plt.subplots(figsize=(10.5, 5.8))
+    colors = [SERIES_COLORS[i % len(SERIES_COLORS)] for i in range(len(values))]
+    bars = ax.bar(labels, values, color=colors, width=0.58)
+    ax.axhline(0, color="#6b7280", lw=1)
+    for bar, value in zip(bars, values):
+        ax.text(bar.get_x() + bar.get_width() / 2, value, _fmt(value, 3), ha="center", va="bottom" if value >= 0 else "top", fontsize=9)
+    _style_axis(ax, title, x_label, y_label, note)
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    return fig
+
+
+def _fig_group_bar(title: str, labels: list[str], series: dict[str, list[float]], x_label: str, y_label: str, note: str):
+    plt, _ = _get_matplotlib()
+    if not labels or not series:
+        return _blank_figure(title, "No rows available.")
+    fig, ax = plt.subplots(figsize=(10.8, 5.9))
+    x = list(range(len(labels)))
+    n_series = max(1, len(series))
+    width = min(0.24, 0.72 / n_series)
+    offset0 = -width * (n_series - 1) / 2
+    for i, (name, values) in enumerate(series.items()):
+        vals = [_safe_float(values[j] if j < len(values) else 0.0, 0.0) or 0.0 for j in range(len(labels))]
+        pos = [v + offset0 + i * width for v in x]
+        ax.bar(pos, vals, width=width, label=name, color=SERIES_COLORS[i % len(SERIES_COLORS)])
+    ax.axhline(0, color="#6b7280", lw=1)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.legend(loc="best", frameon=False)
+    _style_axis(ax, title, x_label, y_label, note)
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    return fig
+
+
+def _fig_count_group(title: str, rows: list[dict[str, Any]], group_col: str):
+    if not rows:
+        return _blank_figure(title, "No rows available.")
+    splits = sorted({str(r.get("split")) for r in rows}, key=_split_key)
+    groups = [g for g in CLASSES if any(str(r.get(group_col)) == g for r in rows)]
+    groups.extend(sorted({str(r.get(group_col)) for r in rows if str(r.get(group_col)) not in groups}))
+    series = {}
+    for group in groups:
+        values = []
+        for split in splits:
+            total = sum(int(r.get("n", 0) or 0) for r in rows if str(r.get("split")) == split and str(r.get(group_col)) == group)
+            values.append(float(total))
+        series[group] = values
+    return _fig_group_bar(
+        title,
+        splits,
+        series,
+        "Data split",
+        "Number of samples",
+        "Use this as a sanity check. Severe class imbalance makes reward improvement less trustworthy.",
+    )
+
+
+def _fig_rule_reward_histogram(predictions: "pd.DataFrame | None"):
+    if predictions is None or predictions.empty or "reward" not in predictions:
+        return _blank_figure("Rule Baseline Sample Reward Distribution", "No rule-baseline prediction rows are available.")
+    values = [_safe_float(v) for v in predictions["reward"].tolist()]
+    values = [v for v in values if v is not None]
+    if not values:
+        return _blank_figure("Rule Baseline Sample Reward Distribution", "No numeric reward values are available.")
+    plt, _ = _get_matplotlib()
+    fig, ax = plt.subplots(figsize=(10.5, 5.8))
+    ax.hist(values, bins=24, color="#2563eb", edgecolor="white", alpha=0.86)
+    ax.axvline(sum(values) / len(values), color="#dc2626", linestyle="--", linewidth=1.8, label=f"mean={_fmt(sum(values) / len(values), 3)}")
+    ax.legend(frameon=False)
+    _style_axis(
+        ax,
+        "Rule Baseline Sample Reward Distribution",
+        "Sample reward",
+        "Count",
+        "A healthier baseline has rewards spread around useful positive values rather than collapsing near a single constant.",
+    )
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    return fig
+
+
+def _fig_alpha_vs_return(predictions: "pd.DataFrame | None"):
+    if predictions is None or predictions.empty or "alpha_score" not in predictions or "future_relative_return" not in predictions:
+        return _blank_figure("Rule Alpha Score vs Future Relative Return", "No alpha_score/future_relative_return rows are available.")
+    points = [
+        (_safe_float(row.get("alpha_score")), _safe_float(row.get("future_relative_return")))
+        for _, row in predictions.iterrows()
+    ]
+    points = [(x, y) for x, y in points if x is not None and y is not None]
+    if not points:
+        return _blank_figure("Rule Alpha Score vs Future Relative Return", "No numeric points are available.")
+    plt, _ = _get_matplotlib()
+    fig, ax = plt.subplots(figsize=(10.5, 5.8))
+    xs, ys = zip(*points)
+    ax.scatter(xs, ys, s=12, color="#2563eb", alpha=0.45, edgecolors="none")
+    ax.axhline(0, color="#9ca3af", lw=1)
+    ax.axvline(0, color="#9ca3af", lw=1)
+    corr = None
+    if len(points) >= 3:
+        try:
+            corr = pd.Series(xs).corr(pd.Series(ys), method="spearman")
+        except Exception:
+            corr = None
+    note = "Positive slope / positive Spearman correlation means the score ranks better future relative returns."
+    if corr is not None and math.isfinite(float(corr)):
+        note += f" Spearman={_fmt(corr, 3)}."
+    _style_axis(ax, "Rule Alpha Score vs Future Relative Return", "Alpha score", "Future relative return", note)
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    return fig
+
+
+def _metric_points(metric_rows: list[dict[str, Any]], metric: str) -> list[tuple[int, float]]:
+    points: list[tuple[int, float]] = []
+    for row in metric_rows:
+        value = _safe_float(row.get(metric))
+        step = _safe_float(row.get("step"))
+        if value is not None and step is not None:
+            points.append((int(step), value))
+    points.sort(key=lambda x: x[0])
+    return points
+
+
+def _metric_columns(metric_rows: list[dict[str, Any]], includes: list[str], excludes: list[str] | None = None) -> list[str]:
+    excludes = excludes or []
+    columns: set[str] = set()
+    for row in metric_rows:
+        for key, value in row.items():
+            low = key.lower()
+            if key in {"step", "source"} or _safe_float(value) is None:
+                continue
+            if all(term in low for term in includes) and not any(term in low for term in excludes):
+                columns.add(key)
+    return sorted(columns)
+
+
+def _fig_metric_lines(title: str, metric_rows: list[dict[str, Any]], metrics: list[str], y_label: str, note: str):
+    plt, _ = _get_matplotlib()
+    metrics = [m for m in metrics if _metric_points(metric_rows, m)]
+    if not metrics:
+        return _blank_figure(title, "No matching training metric rows were found.")
+    fig, ax = plt.subplots(figsize=(10.8, 5.9))
+    for i, metric in enumerate(metrics[:6]):
+        points = _metric_points(metric_rows, metric)
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        label = _short_metric_name(metric)
+        ax.plot(xs, ys, marker="o", markersize=3, linewidth=1.8, color=SERIES_COLORS[i % len(SERIES_COLORS)], label=label)
+        if len(points) >= 2:
+            ax.annotate(
+                f"{_fmt(ys[0], 3)} -> {_fmt(ys[-1], 3)}",
+                xy=(xs[-1], ys[-1]),
+                xytext=(6, 0),
+                textcoords="offset points",
+                fontsize=8,
+                color=SERIES_COLORS[i % len(SERIES_COLORS)],
+            )
+    ax.legend(loc="best", frameon=False)
+    _style_axis(ax, title, "Training step", y_label, note)
+    fig.tight_layout(rect=[0, 0.07, 1, 1])
+    return fig
+
+
+def _short_metric_name(metric: str, limit: int = 46) -> str:
+    text = str(metric)
+    replacements = [
+        ("rollout_reward_scores/", ""),
+        ("critic/rewards/", "reward/"),
+        ("critic/scores/", "score/"),
+        ("global_seqlen/", "seqlen/"),
+    ]
+    for old, new in replacements:
+        text = text.replace(old, new)
+    if len(text) > limit:
+        return text[: limit - 3] + "..."
+    return text
+
+
+def _fig_rl_reward_curve(metric_rows: list[dict[str, Any]], reward_progress_rows: list[dict[str, Any]]):
+    metrics = [str(r.get("metric")) for r in reward_progress_rows[:4] if r.get("metric")]
+    if not metrics:
+        metrics = _reward_columns(metric_rows)[:4]
+    return _fig_metric_lines(
+        "RL Reward Curve",
+        metric_rows,
+        metrics,
+        "Reward / score",
+        "Good sign: validation or rollout reward increases from the first logged point and does not collapse later. Best-first is useful for short smoke tests; last-first is more important for stable long runs.",
+    )
+
+
+def _fig_baseline_vs_rl_reward(baseline_rows: list[dict[str, Any]], reward_progress_rows: list[dict[str, Any]]):
+    valid = _safe_float(_row_for_split(baseline_rows, "valid").get("mean_reward"))
+    train = _safe_float(_row_for_split(baseline_rows, "train").get("mean_reward"))
+    baseline = valid if valid is not None else train
+    labels = ["rule baseline"]
+    values = [baseline or 0.0]
+    if reward_progress_rows:
+        item = reward_progress_rows[0]
+        labels.extend(["RL first", "RL last", "RL best"])
+        values.extend([
+            _safe_float(item.get("first_reward"), 0.0) or 0.0,
+            _safe_float(item.get("last_reward"), 0.0) or 0.0,
+            _safe_float(item.get("best_reward"), 0.0) or 0.0,
+        ])
+    return _fig_bar_single(
+        "Rule Baseline vs RL Reward",
+        labels,
+        values,
+        "Reference point",
+        "Reward",
+        "For the mentor story, the minimum evidence is RL last > RL first. Stronger evidence is RL best/last approaching or exceeding the rule baseline on validation.",
+    )
+
+
+def _fig_tool_usage(metric_rows: list[dict[str, Any]]):
+    metrics = []
+    preferred_terms = [
+        ["num_tool_calls"],
+        ["tool_use_reward"],
+        ["missing_tool_penalty"],
+        ["tool_calls"],
+        ["num_turns"],
+    ]
+    for terms in preferred_terms:
+        for col in _metric_columns(metric_rows, terms):
+            if col not in metrics:
+                metrics.append(col)
+    return _fig_metric_lines(
+        "Tool Usage During RL",
+        metric_rows,
+        metrics[:6],
+        "Metric value",
+        "Good sign for a search agent: num_tool_calls rises above zero when min_tool_calls is enabled. If missing_tool_penalty stays negative, the model is still avoiding or failing tool calls.",
+    )
+
+
+def _fig_reward_components(metric_rows: list[dict[str, Any]]):
+    names = [
+        "direction_reward",
+        "prob_reward",
+        "brier_reward",
+        "pnl_reward",
+        "evidence_reward",
+        "format_reward",
+        "tool_use_reward",
+        "missing_tool_penalty",
+        "search_cost",
+    ]
+    metrics = []
+    for name in names:
+        for col in _metric_columns(metric_rows, [name]):
+            if col not in metrics:
+                metrics.append(col)
+    return _fig_metric_lines(
+        "Reward Components",
+        metric_rows,
+        metrics[:6],
+        "Component value",
+        "Good sign: useful components such as probability/Brier/PnL/tool-use improve while penalty components move toward zero.",
+    )
+
+
+def _fig_optimization_health(metric_rows: list[dict[str, Any]]):
+    terms = [
+        ["kl"],
+        ["entropy"],
+        ["clip"],
+        ["loss"],
+        ["response"],
+        ["prompt"],
+    ]
+    metrics = []
+    for term in terms:
+        for col in _metric_columns(metric_rows, term):
+            low = col.lower()
+            if "reward" in low or "score" in low:
+                continue
+            if col not in metrics:
+                metrics.append(col)
+    return _fig_metric_lines(
+        "Optimization Health Metrics",
+        metric_rows,
+        metrics[:6],
+        "Metric value",
+        "Use this page to diagnose training stability. Watch for extreme KL/loss spikes, response length collapse, or clipping metrics saturating.",
     )
 
 
@@ -650,218 +1067,6 @@ def _value_range(values: list[float]) -> tuple[float, float]:
         high += 1.0
     pad = (high - low) * 0.08
     return low - pad, high + pad
-
-
-def _write_bar_svg(path: Path, title: str, labels: list[Any], series: dict[str, list[float]], y_label: str = "") -> Path:
-    width, height = 920, 520
-    left, right, top, bottom = 86, 32, 64, 88
-    chart_w = width - left - right
-    chart_h = height - top - bottom
-    all_values = [v for values in series.values() for v in values]
-    y_min, y_max = _value_range(all_values)
-
-    def y_pos(v: float) -> float:
-        return top + chart_h - (v - y_min) / (y_max - y_min) * chart_h
-
-    svg = _svg_start(width, height)
-    svg += _svg_text(width / 2, 30, title, 20, anchor="middle")
-    if not labels or not series:
-        svg += _svg_text(width / 2, height / 2, "No data available.", 16, "#6b7280", "middle")
-        svg += "</svg>\n"
-        path.write_text(svg, encoding="utf-8")
-        return path
-    zero_y = y_pos(0.0)
-    svg += f'<line x1="{left}" y1="{zero_y:.1f}" x2="{width - right}" y2="{zero_y:.1f}" stroke="#9ca3af"/>\n'
-    svg += f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height - bottom}" stroke="#374151"/>\n'
-    svg += f'<line x1="{left}" y1="{height - bottom}" x2="{width - right}" y2="{height - bottom}" stroke="#374151"/>\n'
-    for i in range(5):
-        v = y_min + (y_max - y_min) * i / 4
-        y = y_pos(v)
-        svg += f'<line x1="{left}" y1="{y:.1f}" x2="{width - right}" y2="{y:.1f}" stroke="#e5e7eb"/>\n'
-        svg += _svg_text(left - 10, y + 4, _fmt(v, 3), 11, "#4b5563", "end")
-    n_groups = len(labels)
-    n_series = max(1, len(series))
-    group_w = chart_w / max(1, n_groups)
-    bar_w = min(42, group_w * 0.72 / n_series)
-    for s_idx, (name, values) in enumerate(series.items()):
-        color = SERIES_COLORS[s_idx % len(SERIES_COLORS)]
-        for i, label in enumerate(labels):
-            value = _safe_float(values[i] if i < len(values) else 0.0, 0.0) or 0.0
-            x = left + i * group_w + group_w / 2 - (n_series * bar_w) / 2 + s_idx * bar_w
-            y = min(y_pos(value), zero_y)
-            h = abs(y_pos(value) - zero_y)
-            svg += f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w * 0.86:.1f}" height="{h:.1f}" fill="{color}"/>\n'
-        legend_x = left + s_idx * 180
-        svg += f'<rect x="{legend_x}" y="{height - 34}" width="12" height="12" fill="{color}"/>\n'
-        svg += _svg_text(legend_x + 18, height - 24, name, 12)
-    for i, label in enumerate(labels):
-        x = left + i * group_w + group_w / 2
-        svg += _svg_text(x, height - bottom + 26, label, 12, "#374151", "middle")
-    if y_label:
-        svg += _svg_text(20, top + chart_h / 2, y_label, 12, "#4b5563")
-    svg += "</svg>\n"
-    path.write_text(svg, encoding="utf-8")
-    return path
-
-
-def _write_count_group_svg(path: Path, title: str, rows: list[dict[str, Any]], group_col: str) -> Path:
-    if not rows:
-        return _write_placeholder_svg(path, title, "No rows available.")
-    splits = sorted({str(r.get("split")) for r in rows}, key=_split_key)
-    groups = [g for g in CLASSES if any(str(r.get(group_col)) == g for r in rows)]
-    groups.extend(sorted({str(r.get(group_col)) for r in rows if str(r.get(group_col)) not in groups}))
-    series: dict[str, list[float]] = {}
-    for group in groups:
-        values = []
-        for split in splits:
-            total = sum(int(r.get("n", 0) or 0) for r in rows if str(r.get("split")) == split and str(r.get(group_col)) == group)
-            values.append(float(total))
-        series[group] = values
-    return _write_bar_svg(path, title, splits, series, y_label="count")
-
-
-def _write_histogram_svg(path: Path, title: str, values: list[float], bins: int = 20) -> Path:
-    if not values:
-        return _write_placeholder_svg(path, title, "No values available.")
-    low, high = min(values), max(values)
-    if abs(high - low) < 1e-9:
-        low -= 0.5
-        high += 0.5
-    counts = [0] * bins
-    for value in values:
-        idx = int((value - low) / (high - low) * bins)
-        idx = max(0, min(bins - 1, idx))
-        counts[idx] += 1
-    labels = [f"{low + (high - low) * (i + 0.5) / bins:.2f}" for i in range(bins)]
-    return _write_bar_svg(path, title, labels, {"count": [float(c) for c in counts]}, y_label="count")
-
-
-def _write_scatter_svg(path: Path, title: str, points: list[tuple[float, float]], x_label: str, y_label: str) -> Path:
-    width, height = 920, 520
-    left, right, top, bottom = 86, 32, 64, 82
-    chart_w = width - left - right
-    chart_h = height - top - bottom
-    svg = _svg_start(width, height)
-    svg += _svg_text(width / 2, 30, title, 20, anchor="middle")
-    if not points:
-        svg += _svg_text(width / 2, height / 2, "No data available.", 16, "#6b7280", "middle")
-        svg += "</svg>\n"
-        path.write_text(svg, encoding="utf-8")
-        return path
-    xs = [p[0] for p in points]
-    ys = [p[1] for p in points]
-    x_min, x_max = _value_range(xs)
-    y_min, y_max = _value_range(ys)
-
-    def x_pos(v: float) -> float:
-        return left + (v - x_min) / (x_max - x_min) * chart_w
-
-    def y_pos(v: float) -> float:
-        return top + chart_h - (v - y_min) / (y_max - y_min) * chart_h
-
-    svg += f'<line x1="{left}" y1="{height - bottom}" x2="{width - right}" y2="{height - bottom}" stroke="#374151"/>\n'
-    svg += f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height - bottom}" stroke="#374151"/>\n'
-    svg += f'<line x1="{left}" y1="{y_pos(0.0):.1f}" x2="{width - right}" y2="{y_pos(0.0):.1f}" stroke="#e5e7eb"/>\n'
-    svg += f'<line x1="{x_pos(0.0):.1f}" y1="{top}" x2="{x_pos(0.0):.1f}" y2="{height - bottom}" stroke="#e5e7eb"/>\n'
-    step = max(1, len(points) // 1000)
-    for x, y in points[::step]:
-        svg += f'<circle cx="{x_pos(x):.1f}" cy="{y_pos(y):.1f}" r="2.4" fill="#2563eb" fill-opacity="0.42"/>\n'
-    svg += _svg_text(width / 2, height - 26, x_label, 13, "#374151", "middle")
-    svg += _svg_text(20, top + chart_h / 2, y_label, 13, "#374151")
-    svg += _svg_text(left, height - bottom + 22, _fmt(x_min, 3), 11, "#4b5563", "middle")
-    svg += _svg_text(width - right, height - bottom + 22, _fmt(x_max, 3), 11, "#4b5563", "middle")
-    svg += _svg_text(left - 10, y_pos(y_min), _fmt(y_min, 3), 11, "#4b5563", "end")
-    svg += _svg_text(left - 10, y_pos(y_max) + 4, _fmt(y_max, 3), 11, "#4b5563", "end")
-    svg += "</svg>\n"
-    path.write_text(svg, encoding="utf-8")
-    return path
-
-
-def _write_rl_reward_curve_svg(path: Path, metric_rows: list[dict[str, Any]], reward_progress_rows: list[dict[str, Any]]) -> Path:
-    if not reward_progress_rows:
-        return _write_placeholder_svg(path, "RL Reward Curve", "No verl reward metrics found yet.")
-    metric = reward_progress_rows[0]["metric"]
-    points: list[tuple[int, float]] = []
-    for row in metric_rows:
-        value = _safe_float(row.get(metric))
-        step = _safe_float(row.get("step"))
-        if value is not None and step is not None:
-            points.append((int(step), value))
-    return _write_line_svg(path, f"RL Reward Curve: {metric}", points, y_label="reward")
-
-
-def _write_baseline_vs_rl_svg(path: Path, baseline_rows: list[dict[str, Any]], reward_progress_rows: list[dict[str, Any]]) -> Path:
-    valid = _safe_float(_row_for_split(baseline_rows, "valid").get("mean_reward"))
-    train = _safe_float(_row_for_split(baseline_rows, "train").get("mean_reward"))
-    baseline = valid if valid is not None else train
-    if not reward_progress_rows:
-        labels = ["rule_baseline"]
-        series = {"reward": [baseline or 0.0]}
-        return _write_bar_svg(path, "Rule Baseline vs RL Reward", labels, series, y_label="reward")
-    item = reward_progress_rows[0]
-    labels = ["rule_baseline", "rl_first", "rl_last", "rl_best"]
-    values = [
-        baseline or 0.0,
-        _safe_float(item.get("first_reward"), 0.0) or 0.0,
-        _safe_float(item.get("last_reward"), 0.0) or 0.0,
-        _safe_float(item.get("best_reward"), 0.0) or 0.0,
-    ]
-    return _write_bar_svg(path, "Rule Baseline vs RL Reward", labels, {"reward": values}, y_label="reward")
-
-
-def _write_line_svg(path: Path, title: str, points: list[tuple[int, float]], y_label: str = "") -> Path:
-    width, height = 920, 520
-    left, right, top, bottom = 86, 32, 64, 82
-    chart_w = width - left - right
-    chart_h = height - top - bottom
-    svg = _svg_start(width, height)
-    svg += _svg_text(width / 2, 30, title, 20, anchor="middle")
-    if not points:
-        svg += _svg_text(width / 2, height / 2, "No data available.", 16, "#6b7280", "middle")
-        svg += "</svg>\n"
-        path.write_text(svg, encoding="utf-8")
-        return path
-    points = sorted(points)
-    x_min, x_max = float(points[0][0]), float(points[-1][0])
-    if abs(x_max - x_min) < 1e-9:
-        x_max += 1.0
-    y_min, y_max = _value_range([p[1] for p in points])
-
-    def x_pos(v: float) -> float:
-        return left + (v - x_min) / (x_max - x_min) * chart_w
-
-    def y_pos(v: float) -> float:
-        return top + chart_h - (v - y_min) / (y_max - y_min) * chart_h
-
-    svg += f'<line x1="{left}" y1="{height - bottom}" x2="{width - right}" y2="{height - bottom}" stroke="#374151"/>\n'
-    svg += f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height - bottom}" stroke="#374151"/>\n'
-    for i in range(5):
-        yv = y_min + (y_max - y_min) * i / 4
-        y = y_pos(yv)
-        svg += f'<line x1="{left}" y1="{y:.1f}" x2="{width - right}" y2="{y:.1f}" stroke="#e5e7eb"/>\n'
-        svg += _svg_text(left - 10, y + 4, _fmt(yv, 3), 11, "#4b5563", "end")
-    poly = " ".join(f"{x_pos(step):.1f},{y_pos(value):.1f}" for step, value in points)
-    svg += f'<polyline points="{poly}" fill="none" stroke="#2563eb" stroke-width="2.5"/>\n'
-    for step, value in points[-120:]:
-        svg += f'<circle cx="{x_pos(step):.1f}" cy="{y_pos(value):.1f}" r="2.6" fill="#2563eb"/>\n'
-    svg += _svg_text(left, height - bottom + 24, str(points[0][0]), 11, "#4b5563", "middle")
-    svg += _svg_text(width - right, height - bottom + 24, str(points[-1][0]), 11, "#4b5563", "middle")
-    if y_label:
-        svg += _svg_text(20, top + chart_h / 2, y_label, 13, "#374151")
-    svg += "</svg>\n"
-    path.write_text(svg, encoding="utf-8")
-    return path
-
-
-def _write_placeholder_svg(path: Path, title: str, message: str) -> Path:
-    width, height = 920, 520
-    svg = _svg_start(width, height)
-    svg += _svg_text(width / 2, 34, title, 20, anchor="middle")
-    svg += f'<rect x="110" y="130" width="700" height="220" fill="#f9fafb" stroke="#d1d5db"/>\n'
-    svg += _svg_text(width / 2, 240, message, 16, "#6b7280", "middle")
-    svg += "</svg>\n"
-    path.write_text(svg, encoding="utf-8")
-    return path
 
 
 def _write_report_index(
@@ -901,7 +1106,7 @@ def _write_report_index(
             lines.append(f"- `{name}`: [{rel}]({rel})")
     lines.extend(["", "## Figures", ""])
     for name, path in artifacts.items():
-        if path.endswith(".svg"):
+        if path.endswith(".pdf") and Path(path).name != "stock_agent_rl_report.pdf":
             rel = _relative_display_path(Path(path), report_dir)
             lines.append(f"- `{name}`: [{rel}]({rel})")
     lines.extend(["", "## Baseline Metrics", ""])
@@ -948,274 +1153,344 @@ def _write_pdf_report(
     metric_rows: list[dict[str, Any]],
     artifacts: dict[str, str],
 ) -> None:
-    pdf = SimplePDF()
-    pdf.heading("Stock Search-Agent RL Report")
-    pdf.text(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    pdf.text(f"Run: {run_dir}")
-    pdf.spacer(8)
-    pdf.heading("Executive Summary", size=16)
-    if reward_progress_rows:
-        primary = reward_progress_rows[0]
-        pdf.text(
-            "Primary RL reward metric improved from "
-            f"{_fmt(primary.get('first_reward'))} to {_fmt(primary.get('last_reward'))}; "
-            f"best observed reward was {_fmt(primary.get('best_reward'))}."
+    plt, PdfPages = _get_matplotlib()
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    with PdfPages(pdf_path) as pdf:
+        for fig in _report_figures(
+            run_dir=run_dir,
+            baseline_rows=baseline_rows,
+            dataset_rows=dataset_rows,
+            reward_progress_rows=reward_progress_rows,
+            baseline_vs_rl_rows=baseline_vs_rl_rows,
+            label_rows=label_rows,
+            prediction_rows=prediction_rows,
+            metric_rows=metric_rows,
+            artifacts=artifacts,
+        ):
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+
+def _report_figures(
+    run_dir: Path,
+    baseline_rows: list[dict[str, Any]],
+    dataset_rows: list[dict[str, Any]],
+    reward_progress_rows: list[dict[str, Any]],
+    baseline_vs_rl_rows: list[dict[str, Any]],
+    label_rows: list[dict[str, Any]],
+    prediction_rows: list[dict[str, Any]],
+    metric_rows: list[dict[str, Any]],
+    artifacts: dict[str, str],
+) -> list[Any]:
+    figures: list[Any] = []
+    figures.append(_fig_title_summary(run_dir, baseline_rows, dataset_rows, reward_progress_rows))
+    figures.append(_fig_workflow())
+    figures.append(
+        _fig_text_page(
+            "How to Read This Report",
+            [
+                (
+                    "Primary success criterion",
+                    "For the mentor task, the most direct evidence is RL reward improvement: RL last reward should be higher than RL first reward; RL best reward shows the best checkpoint seen during training.",
+                ),
+                (
+                    "Search-agent evidence",
+                    "If tool-use training is enabled, num_tool_calls should be above zero and missing_tool_penalty should move toward zero. If reward rises but tool calls stay at zero, the run is an RL smoke test, not yet strong evidence of search-agent behavior.",
+                ),
+                (
+                    "Prediction evidence",
+                    "Accuracy and macro-F1 measure direction classification. Rank IC and top-bottom return measure stock-selection/ranking quality. These are complementary; reward is the training objective.",
+                ),
+                (
+                    "Stability evidence",
+                    "KL, loss, clipping, and response-length metrics should not spike or collapse. A short 3090 run can prove the pipeline; a longer A800 run is needed for convincing predictive improvement.",
+                ),
+            ],
         )
-    else:
-        pdf.text("No RL reward metric rows were found yet. This PDF currently shows dataset and rule-baseline evidence.")
+    )
+    figures.append(
+        _fig_table_page(
+            "Dataset Summary",
+            dataset_rows,
+            ["split", "n", "stocks", "trade_dates", "label_up", "label_neutral", "label_down", "mean_future_relative_return"],
+            "Checks whether train/valid/test have enough samples and reasonably balanced labels.",
+        )
+    )
+    figures.append(_fig_count_group("Task Label Distribution", label_rows, "label"))
+    figures.append(
+        _fig_table_page(
+            "Function Tools Used by the Agent",
+            _tool_description_rows(),
+            ["tool", "meaning", "local_table", "online_during_rl", "interpretation"],
+            "All tools are local table lookups during RL rollout. Tushare is used only during data building/cache refresh.",
+            max_rows=10,
+        )
+    )
+    figures.append(
+        _fig_text_page(
+            "Reward Design",
+            [
+                (
+                    "Verifiable target",
+                    "Each task hides the future relative return label from the model. The reward function can verify the final prediction against the label after rollout.",
+                ),
+                (
+                    "Main components",
+                    "Total reward combines direction correctness, calibrated class probabilities, Brier score, simple PnL-style alpha payoff, evidence/format rewards, tool-use rewards, and penalties.",
+                ),
+                (
+                    "Why this is RLVR-like",
+                    "The reward is computed from observable future returns and strict JSON outputs, so it does not require a human preference model.",
+                ),
+                (
+                    "What improves in a good run",
+                    "Reward should rise because the policy learns output format, probability calibration, class direction, and when enabled, tool-using behavior.",
+                ),
+            ],
+        )
+    )
+    figures.append(
+        _fig_table_page(
+            "Rule Baseline Metrics",
+            baseline_rows,
+            ["split", "n", "mean_reward", "accuracy", "macro_f1", "brier", "mean_rank_ic", "top_bottom_return"],
+            "Rule baseline is a non-RL reference built from deterministic factors. It is not the main claim, but it tells us whether the constructed data has usable signal.",
+        )
+    )
+    figures.append(_fig_baseline_reward(baseline_rows))
+    figures.append(_fig_baseline_accuracy_f1(baseline_rows))
+    figures.append(_fig_baseline_rank_spread(baseline_rows))
+    figures.append(
+        _fig_table_page(
+            "RL Reward Progress",
+            reward_progress_rows,
+            ["metric", "points", "first_step", "first_reward", "last_step", "last_reward", "best_step", "best_reward", "delta_last_minus_first", "delta_best_minus_first"],
+            "This is the key table for mentor review. Positive last-first means the trained policy improved over the logged run.",
+            max_rows=12,
+        )
+    )
+    figures.append(
+        _fig_table_page(
+            "Rule Baseline vs RL Reward",
+            baseline_vs_rl_rows,
+            ["rl_metric", "rule_baseline_reference_split", "rule_baseline_mean_reward", "rl_first_reward", "rl_last_reward", "rl_best_reward", "rl_last_minus_first", "rl_last_minus_rule_baseline"],
+            "For small 3090 smoke tests, focus on RL last-first. For the final A800 run, also compare against the rule baseline.",
+            max_rows=8,
+        )
+    )
+    figures.append(_fig_rl_reward_curve(metric_rows, reward_progress_rows))
+    figures.append(_fig_baseline_vs_rl_reward(baseline_rows, reward_progress_rows))
+    figures.append(_fig_tool_usage(metric_rows))
+    figures.append(_fig_reward_components(metric_rows))
+    figures.append(_fig_optimization_health(metric_rows))
+    figures.append(_fig_count_group("Rule Prediction Distribution", prediction_rows, "prediction"))
+    figures.append(_fig_rule_reward_histogram(_read_cached_table(run_dir / "rollouts" / "rule_baseline_predictions")))
+    figures.append(_fig_alpha_vs_return(_read_cached_table(run_dir / "rollouts" / "rule_baseline_predictions")))
+    figures.append(
+        _fig_text_page(
+            "Artifacts and Reproducibility",
+            _artifact_sections(artifacts),
+            footer="The report directory contains CSV tables for exact values and PDF figures for presentation. Re-run with --mode report-latest to regenerate this PDF after training.",
+        )
+    )
+    return figures
+
+
+def _tool_description_rows() -> list[dict[str, str]]:
+    return [
+        {
+            "tool": "get_price_factors",
+            "meaning": "Stock price/factor snapshot",
+            "local_table": "factor_snapshot",
+            "online_during_rl": "No",
+            "interpretation": "Momentum, relative strength, volatility, turnover, PE/PB, market cap.",
+        },
+        {
+            "tool": "get_market_context",
+            "meaning": "Market index context",
+            "local_table": "market_context",
+            "online_during_rl": "No",
+            "interpretation": "Whether the market benchmark is strong, weak, or volatile.",
+        },
+        {
+            "tool": "get_industry_context",
+            "meaning": "Industry context",
+            "local_table": "industry_context",
+            "online_during_rl": "No",
+            "interpretation": "Industry momentum, valuation percentile, turnover, volatility.",
+        },
+        {
+            "tool": "get_peer_context",
+            "meaning": "Peer comparison",
+            "local_table": "peer_context",
+            "online_during_rl": "No",
+            "interpretation": "Compare the target stock with same-industry peers.",
+        },
+        {
+            "tool": "get_fundamental_snapshot",
+            "meaning": "Fundamental snapshot",
+            "local_table": "fundamental_snapshot",
+            "online_during_rl": "No",
+            "interpretation": "Revenue/profit/ROE if available; PE/PB and size fallback otherwise.",
+        },
+        {
+            "tool": "search_announcements",
+            "meaning": "Announcement search",
+            "local_table": "announcements",
+            "online_during_rl": "No",
+            "interpretation": "Point-in-time local announcement/event lookup.",
+        },
+        {
+            "tool": "search_news",
+            "meaning": "News/event search",
+            "local_table": "news",
+            "online_during_rl": "No",
+            "interpretation": "Point-in-time local news or derived event lookup.",
+        },
+    ]
+
+
+def _artifact_sections(artifacts: dict[str, str]) -> list[tuple[str, str]]:
+    table_items = []
+    figure_items = []
+    other_items = []
+    for name, path in sorted(artifacts.items()):
+        file_name = Path(path).name
+        if path.endswith(".csv") or path.endswith(".md"):
+            table_items.append(f"{name}: {file_name}")
+        elif path.endswith(".pdf") and file_name != "stock_agent_rl_report.pdf":
+            figure_items.append(f"{name}: {file_name}")
+        else:
+            other_items.append(f"{name}: {file_name}")
+    sections = []
+    sections.append(("Tables", "\n".join(table_items[:16]) or "No table artifacts."))
+    sections.append(("Figure PDFs", "\n".join(figure_items[:18]) or "No figure artifacts."))
+    sections.append(("Other", "\n".join(other_items[:8]) or "No other artifacts."))
+    return sections
+
+
+def _fig_title_summary(
+    run_dir: Path,
+    baseline_rows: list[dict[str, Any]],
+    dataset_rows: list[dict[str, Any]],
+    reward_progress_rows: list[dict[str, Any]],
+):
+    summary_lines = [
+        f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Run directory: {run_dir}",
+        "",
+    ]
+    total_n = sum(int(row.get("n", 0) or 0) for row in dataset_rows)
+    stocks = sorted({_cell_value(row.get("stocks")) for row in dataset_rows if row.get("stocks") not in (None, "")})
+    summary_lines.append(f"Dataset: {total_n} tasks across splits; stocks per split: {', '.join(map(str, stocks)) if stocks else 'unknown'}.")
     valid = _row_for_split(baseline_rows, "valid")
     if valid:
-        pdf.text(
-            "Rule-baseline valid split: "
-            f"mean_reward={_fmt(valid.get('mean_reward'))}, accuracy={_fmt(valid.get('accuracy'))}, "
-            f"macro_f1={_fmt(valid.get('macro_f1'))}."
+        summary_lines.append(
+            "Rule baseline valid: "
+            f"mean_reward={_fmt(valid.get('mean_reward'))}, accuracy={_fmt(valid.get('accuracy'))}, macro_f1={_fmt(valid.get('macro_f1'))}."
         )
-    pdf.spacer(10)
-    pdf.table(
-        "Baseline Metrics",
-        baseline_rows,
-        ["split", "n", "mean_reward", "accuracy", "macro_f1", "brier", "mean_rank_ic", "top_bottom_return"],
-    )
-    pdf.table("Dataset Summary", dataset_rows, ["split", "n", "stocks", "trade_dates", "label_up", "label_neutral", "label_down"])
-
-    pdf.new_page()
-    pdf.heading("Reward Evidence")
-    pdf.table(
-        "RL Reward Progress",
-        reward_progress_rows,
-        ["metric", "points", "first_reward", "last_reward", "best_reward", "delta_last_minus_first", "delta_best_minus_first"],
-        max_rows=8,
-    )
-    pdf.table(
-        "Rule Baseline vs RL Reward",
-        baseline_vs_rl_rows,
-        ["rl_metric", "rule_baseline_mean_reward", "rl_first_reward", "rl_last_reward", "rl_best_reward", "rl_last_minus_first"],
-        max_rows=8,
-    )
-    pdf.bar_chart(
-        "Rule Baseline Mean Reward",
-        [str(r.get("split")) for r in baseline_rows],
-        [_safe_float(r.get("mean_reward"), 0.0) or 0.0 for r in baseline_rows],
-    )
     if reward_progress_rows:
-        metric = reward_progress_rows[0]["metric"]
-        points = []
-        for row in metric_rows:
-            step = _safe_float(row.get("step"))
-            value = _safe_float(row.get(metric))
-            if step is not None and value is not None:
-                points.append((step, value))
-        pdf.line_chart("RL Reward Curve", points)
-
-    pdf.new_page()
-    pdf.heading("Prediction and Data Checks")
-    pdf.bar_chart(
-        "Baseline Accuracy",
-        [str(r.get("split")) for r in baseline_rows],
-        [_safe_float(r.get("accuracy"), 0.0) or 0.0 for r in baseline_rows],
-    )
-    pdf.group_count_table("Label Distribution", label_rows, "label")
-    pdf.group_count_table("Prediction Distribution", prediction_rows, "prediction")
-
-    pdf.new_page()
-    pdf.heading("Generated Artifacts")
-    pdf.text("The run directory contains CSV/Markdown tables, SVG figures, and this PDF.")
-    for name, path in sorted(artifacts.items()):
-        if name.endswith("_svg") or name.endswith("_csv") or name.endswith("_md"):
-            pdf.text(f"- {name}: {Path(path).name}", size=9)
-    pdf.save(pdf_path)
-
-
-class SimplePDF:
-    def __init__(self, width: int = 612, height: int = 792):
-        self.width = width
-        self.height = height
-        self.margin = 50
-        self.pages: list[list[str]] = []
-        self.current: list[str] = []
-        self.y = self.height - self.margin
-        self.new_page()
-
-    def new_page(self) -> None:
-        if self.current:
-            self.pages.append(self.current)
-        self.current = []
-        self.y = self.height - self.margin
-
-    def ensure(self, needed: float) -> None:
-        if self.y - needed < self.margin:
-            self.new_page()
-
-    def heading(self, text: str, size: int = 20) -> None:
-        self.ensure(size + 18)
-        self.text(text, size=size)
-        self.y -= 4
-        self.line(self.margin, self.y, self.width - self.margin, self.y, "#d1d5db")
-        self.y -= 14
-
-    def text(self, text: str, size: int = 11, color: str = "#111827") -> None:
-        max_chars = max(30, int((self.width - 2 * self.margin) / (size * 0.52)))
-        for line in textwrap.wrap(str(text), width=max_chars) or [""]:
-            self.ensure(size + 6)
-            self.current.append(f"{_pdf_color(color)} BT /F1 {size} Tf {self.margin} {self.y:.1f} Td ({_pdf_escape(line)}) Tj ET\n")
-            self.y -= size + 5
-
-    def spacer(self, amount: float) -> None:
-        self.y -= amount
-
-    def line(self, x1: float, y1: float, x2: float, y2: float, color: str = "#111827") -> None:
-        self.current.append(f"{_pdf_color(color)} {x1:.1f} {y1:.1f} m {x2:.1f} {y2:.1f} l S\n")
-
-    def rect(self, x: float, y: float, w: float, h: float, color: str = "#2563eb") -> None:
-        self.current.append(f"{_pdf_color(color)} {x:.1f} {y:.1f} {w:.1f} {h:.1f} re f\n")
-
-    def table(self, title: str, rows: list[dict[str, Any]], columns: list[str], max_rows: int = 12) -> None:
-        self.ensure(48)
-        self.text(title, size=14)
-        if not rows:
-            self.text("No rows available.", size=10, color="#6b7280")
-            return
-        usable_cols = [c for c in columns if any(c in row for row in rows)]
-        if not usable_cols:
-            self.text("No columns available.", size=10, color="#6b7280")
-            return
-        self.ensure(18 + min(max_rows, len(rows)) * 14)
-        col_w = (self.width - 2 * self.margin) / len(usable_cols)
-        y = self.y
-        for idx, col in enumerate(usable_cols):
-            self._draw_text_at(self.margin + idx * col_w, y, col[:18], 8, "#374151")
-        y -= 13
-        self.line(self.margin, y + 4, self.width - self.margin, y + 4, "#d1d5db")
-        for row in rows[:max_rows]:
-            for idx, col in enumerate(usable_cols):
-                self._draw_text_at(self.margin + idx * col_w, y, str(_cell_value(row.get(col)))[:18], 8, "#111827")
-            y -= 13
-        self.y = y - 8
-
-    def bar_chart(self, title: str, labels: list[str], values: list[float]) -> None:
-        self.ensure(190)
-        self.text(title, size=14)
-        if not labels or not values:
-            self.text("No chart data.", size=10, color="#6b7280")
-            return
-        x0, y0, w, h = self.margin, self.y - 145, self.width - 2 * self.margin, 120
-        vals = [_safe_float(v, 0.0) or 0.0 for v in values]
-        y_min, y_max = _value_range(vals)
-
-        def yp(v: float) -> float:
-            return y0 + (v - y_min) / (y_max - y_min) * h
-
-        zero_y = yp(0.0)
-        self.line(x0, zero_y, x0 + w, zero_y, "#9ca3af")
-        gap = w / max(1, len(vals))
-        bar_w = min(42, gap * 0.55)
-        for i, value in enumerate(vals):
-            x = x0 + i * gap + gap / 2 - bar_w / 2
-            y = min(yp(value), zero_y)
-            self.rect(x, y, bar_w, abs(yp(value) - zero_y), SERIES_COLORS[i % len(SERIES_COLORS)])
-            self._draw_text_at(x, y0 - 14, labels[i][:10], 8, "#374151")
-        self.y = y0 - 28
-
-    def line_chart(self, title: str, points: list[tuple[float, float]]) -> None:
-        self.ensure(190)
-        self.text(title, size=14)
-        if not points:
-            self.text("No chart data.", size=10, color="#6b7280")
-            return
-        points = sorted(points)
-        x0, y0, w, h = self.margin, self.y - 145, self.width - 2 * self.margin, 120
-        x_min, x_max = points[0][0], points[-1][0]
-        if abs(x_max - x_min) < 1e-9:
-            x_max += 1
-        y_min, y_max = _value_range([p[1] for p in points])
-
-        def xp(v: float) -> float:
-            return x0 + (v - x_min) / (x_max - x_min) * w
-
-        def yp(v: float) -> float:
-            return y0 + (v - y_min) / (y_max - y_min) * h
-
-        self.line(x0, y0, x0 + w, y0, "#374151")
-        self.line(x0, y0, x0, y0 + h, "#374151")
-        if len(points) >= 2:
-            cmd = _pdf_color("#2563eb") + f" {xp(points[0][0]):.1f} {yp(points[0][1]):.1f} m "
-            for step, value in points[1:]:
-                cmd += f"{xp(step):.1f} {yp(value):.1f} l "
-            cmd += "S\n"
-            self.current.append(cmd)
-        self.y = y0 - 28
-
-    def group_count_table(self, title: str, rows: list[dict[str, Any]], group_col: str) -> None:
-        splits = sorted({str(r.get("split")) for r in rows}, key=_split_key)
-        groups = [g for g in CLASSES if any(str(r.get(group_col)) == g for r in rows)]
-        table_rows = []
-        for split in splits:
-            item = {"split": split}
-            for group in groups:
-                item[group] = sum(int(r.get("n", 0) or 0) for r in rows if str(r.get("split")) == split and str(r.get(group_col)) == group)
-            table_rows.append(item)
-        self.table(title, table_rows, ["split", *groups], max_rows=8)
-
-    def _draw_text_at(self, x: float, y: float, text: str, size: int, color: str) -> None:
-        self.current.append(f"{_pdf_color(color)} BT /F1 {size} Tf {x:.1f} {y:.1f} Td ({_pdf_escape(text)}) Tj ET\n")
-
-    def save(self, path: Path) -> None:
-        if self.current:
-            self.pages.append(self.current)
-            self.current = []
-        path.parent.mkdir(parents=True, exist_ok=True)
-        objects: list[bytes] = []
-        n_pages = len(self.pages)
-        font_id = 3
-        content_ids = [4 + i * 2 for i in range(n_pages)]
-        page_ids = [5 + i * 2 for i in range(n_pages)]
-        catalog = b"<< /Type /Catalog /Pages 2 0 R >>"
-        kids = " ".join(f"{pid} 0 R" for pid in page_ids).encode("ascii")
-        pages_obj = b"<< /Type /Pages /Kids [" + kids + b"] /Count " + str(n_pages).encode("ascii") + b" >>"
-        font = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
-        objects.extend([catalog, pages_obj, font])
-        for content_id, page_id, commands in zip(content_ids, page_ids, self.pages):
-            stream = "".join(commands).encode("latin-1", errors="replace")
-            content = b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"endstream"
-            page = (
-                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {self.width} {self.height}] "
-                f"/Resources << /Font << /F1 {font_id} 0 R >> >> /Contents {content_id} 0 R >>"
-            ).encode("ascii")
-            objects.extend([content, page])
-        out = bytearray(b"%PDF-1.4\n")
-        offsets = [0]
-        for idx, obj in enumerate(objects, start=1):
-            offsets.append(len(out))
-            out.extend(f"{idx} 0 obj\n".encode("ascii"))
-            out.extend(obj)
-            out.extend(b"\nendobj\n")
-        xref_pos = len(out)
-        out.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
-        out.extend(b"0000000000 65535 f \n")
-        for off in offsets[1:]:
-            out.extend(f"{off:010d} 00000 n \n".encode("ascii"))
-        out.extend(
-            (
-                f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
-                f"startxref\n{xref_pos}\n%%EOF\n"
-            ).encode("ascii")
+        primary = reward_progress_rows[0]
+        summary_lines.append(
+            "Primary RL metric: "
+            f"{_short_metric_name(primary.get('metric'))}; first={_fmt(primary.get('first_reward'))}, "
+            f"last={_fmt(primary.get('last_reward'))}, best={_fmt(primary.get('best_reward'))}, "
+            f"last-first={_fmt(primary.get('delta_last_minus_first'))}."
         )
-        path.write_bytes(bytes(out))
+        delta = _safe_float(primary.get("delta_last_minus_first"))
+        verdict = "PASS: reward improved over the logged run." if delta is not None and delta > 0 else "CHECK: reward did not improve from first to last."
+        summary_lines.append(verdict)
+    else:
+        summary_lines.append("No RL metric rows were found. The report can still document data and baseline quality, but not RL improvement.")
+
+    return _fig_text_page(
+        "Stock Search-Agent RL Report",
+        [
+            ("Executive summary", "\n".join(summary_lines)),
+            (
+                "Project goal",
+                "Build a function-call search agent for A-share stock direction prediction, then use agentic RL with a verifiable reward to improve prediction behavior.",
+            ),
+            (
+                "Core claim to show",
+                "The strongest evidence is a positive reward trajectory together with non-zero tool usage and stable optimization diagnostics.",
+            ),
+        ],
+        footer="This PDF is generated automatically from the run directory; exact numbers are available in report/tables/*.csv.",
+    )
 
 
-def _pdf_escape(text: Any) -> str:
-    s = str(text).encode("latin-1", errors="replace").decode("latin-1")
-    return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+def _fig_text_page(title: str, sections: list[tuple[str, str]], footer: str = ""):
+    plt, _ = _get_matplotlib()
+    fig, ax = plt.subplots(figsize=(11, 8.5))
+    ax.axis("off")
+    ax.text(0.04, 0.94, title, transform=ax.transAxes, fontsize=20, fontweight="bold", va="top")
+    y = 0.86
+    for heading, body in sections:
+        ax.text(0.05, y, heading, transform=ax.transAxes, fontsize=13, fontweight="bold", color="#111827", va="top")
+        y -= 0.045
+        wrapped = "\n".join(textwrap.wrap(str(body), width=115, replace_whitespace=False))
+        ax.text(0.07, y, wrapped, transform=ax.transAxes, fontsize=10.5, color="#374151", va="top", linespacing=1.35)
+        y -= max(0.10, 0.030 * (wrapped.count("\n") + 1) + 0.055)
+        if y < 0.10:
+            break
+    if footer:
+        ax.text(0.04, 0.035, footer, transform=ax.transAxes, fontsize=9, color="#6b7280", va="bottom")
+    return fig
 
 
-def _pdf_color(color: str) -> str:
-    color = color.lstrip("#")
-    if len(color) != 6:
-        return "0 0 0 rg 0 0 0 RG"
-    r = int(color[0:2], 16) / 255.0
-    g = int(color[2:4], 16) / 255.0
-    b = int(color[4:6], 16) / 255.0
-    return f"{r:.3f} {g:.3f} {b:.3f} rg {r:.3f} {g:.3f} {b:.3f} RG"
+def _fig_table_page(title: str, rows: list[dict[str, Any]], columns: list[str], note: str, max_rows: int = 14):
+    plt, _ = _get_matplotlib()
+    fig, ax = plt.subplots(figsize=(11.7, 8.3))
+    ax.axis("off")
+    ax.text(0.03, 0.95, title, transform=ax.transAxes, fontsize=18, fontweight="bold", va="top")
+    ax.text(0.03, 0.89, "\n".join(textwrap.wrap(note, width=130)), transform=ax.transAxes, fontsize=10, color="#4b5563", va="top")
+    if not rows:
+        ax.text(0.5, 0.50, "No rows available.", transform=ax.transAxes, ha="center", va="center", fontsize=13, color="#6b7280")
+        return fig
+    usable_cols = [c for c in columns if any(c in row for row in rows)]
+    data_rows = []
+    for row in rows[:max_rows]:
+        data_rows.append([_table_cell(row.get(col), col) for col in usable_cols])
+    table = ax.table(
+        cellText=data_rows,
+        colLabels=[_wrap_header(c) for c in usable_cols],
+        cellLoc="left",
+        colLoc="left",
+        loc="upper left",
+        bbox=[0.03, 0.12, 0.94, 0.70],
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(7.5)
+    table.scale(1.0, 1.18)
+    for (r, _c), cell in table.get_celld().items():
+        cell.set_edgecolor("#d1d5db")
+        if r == 0:
+            cell.set_facecolor("#f3f4f6")
+            cell.set_text_props(weight="bold", color="#111827")
+        else:
+            cell.set_facecolor("#ffffff" if r % 2 else "#f9fafb")
+    if len(rows) > max_rows:
+        ax.text(0.03, 0.06, f"Showing first {max_rows} of {len(rows)} rows. See CSV for the full table.", transform=ax.transAxes, fontsize=9, color="#6b7280")
+    return fig
+
+
+def _wrap_header(text: str) -> str:
+    return "\n".join(textwrap.wrap(str(text).replace("_", " "), width=14)) or str(text)
+
+
+def _table_cell(value: Any, col: str) -> str:
+    value = _cell_value(value)
+    if isinstance(value, str):
+        text = value
+    else:
+        text = str(value)
+    if col == "metric" or col == "rl_metric":
+        text = _short_metric_name(text, 36)
+    text = text.replace("\n", " ")
+    if len(text) > 54:
+        return text[:51] + "..."
+    return text
 
 
 def parse_metric_dict_from_line(line: str) -> dict[str, Any]:

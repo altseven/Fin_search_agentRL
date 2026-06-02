@@ -35,6 +35,9 @@ class MVPConfig:
     max_stocks: int = 50
     max_tasks: int = 8000
     max_tool_calls: int = 4
+    min_tool_calls: int = 0
+    tool_use_bonus: float = 0.0
+    missing_tool_penalty: float = 0.0
     up_quantile: float = 0.70
     down_quantile: float = 0.30
     pnl_scale: float = 0.03

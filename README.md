@@ -13,7 +13,7 @@ MVP for a stock search-agent RLVR experiment with Tushare data and verl.
 - `rl_dataset.py`: prompt building and verl parquet export.
 - `rl_baseline.py`: local rule-agent baseline and metrics.
 - `rl_verl.py`: model download helpers and generated verl command.
-- `rl_report.py`: report builder for CSV/Markdown tables, SVG figures, and one summary PDF.
+- `rl_report.py`: report builder for CSV/Markdown tables, PDF figures, and one mentor-ready summary PDF.
 - `data/`: local/reusable market data cache. Parquet caches can be synced to avoid slow repeated Tushare calls.
 - `model/`: local model weights, for example `model/Qwen3-4B`. Ignored by git.
 - `result/`: per-run outputs. Each run creates `HHMMSS_MMDD_result/`. Ignored by git except `.gitkeep`.
@@ -34,7 +34,7 @@ flowchart TD
     F --> H
     G --> I["GRPO multi-turn tool-agent training"]
     I --> J["verl JSONL reward metrics"]
-    H --> K["Report tables + SVG figures + PDF"]
+    H --> K["Report tables + PDF figures + mentor report"]
     J --> K
 ```
 
@@ -225,7 +225,7 @@ Current full-flow version builds:
 - veRL multi-turn GRPO parquet data and command script
 - optional rule-trajectory SFT parquet data and SFT command script
 - rule baseline metrics: reward, accuracy, Macro-F1, Brier, Rank IC, and top-bottom return
-- report artifacts for mentor review: CSV/Markdown tables, SVG charts, and `stock_agent_rl_report.pdf`
+- report artifacts for mentor review: CSV/Markdown tables, PDF figures, and `stock_agent_rl_report.pdf`
 
 Each run writes reports under:
 
@@ -235,17 +235,21 @@ result/<HHMMSS_MMDD_result>/report/
 
 Important report files:
 
-- `stock_agent_rl_report.pdf`: summary bundle for mentor review.
+- `stock_agent_rl_report.pdf`: detailed mentor-ready report with workflow, data, tools, reward design, training curves, diagnostics, and interpretation notes.
 - `report_index.md`: clickable report index with artifact list and short interpretation.
 - `tables/reward_progress.csv`: first/last/best RL reward and reward delta parsed from verl JSONL metrics.
 - `tables/baseline_vs_rl_reward.csv`: rule baseline reward plus RL first/last/best reward.
 - `tables/baseline_metrics.csv`: rule baseline reward, accuracy, Macro-F1, Brier, Rank IC, and top-bottom return.
-- `figures/rl_reward_curve.svg`: RL reward curve.
-- `figures/baseline_vs_rl_reward.svg`: baseline vs RL reward bars.
-- `figures/baseline_mean_reward_by_split.svg`: rule baseline reward by split.
-- `figures/label_distribution.svg` and `figures/prediction_distribution.svg`: data and prediction sanity checks.
-- `figures/rule_reward_histogram.svg`: sample-level rule reward distribution.
-- `figures/alpha_score_vs_future_relative_return.svg`: rule alpha score versus realized relative return.
+- `figures/workflow.pdf`: full data/tool/RL/report workflow diagram.
+- `figures/rl_reward_curve.pdf`: RL reward curve with training-step and reward axes.
+- `figures/baseline_vs_rl_reward.pdf`: rule baseline vs RL first/last/best reward.
+- `figures/tool_usage_over_training.pdf`: tool-call and tool-reward diagnostics.
+- `figures/reward_components_over_training.pdf`: reward component curves.
+- `figures/optimization_health_metrics.pdf`: KL/loss/clipping/length health metrics when logged.
+- `figures/baseline_mean_reward_by_split.pdf`: rule baseline reward by split.
+- `figures/label_distribution.pdf` and `figures/prediction_distribution.pdf`: data and prediction sanity checks.
+- `figures/rule_reward_histogram.pdf`: sample-level rule reward distribution.
+- `figures/alpha_score_vs_future_relative_return.pdf`: rule alpha score versus realized relative return.
 
 If training failed or was interrupted, generate a report from the newest run with:
 

@@ -112,6 +112,9 @@ def parse_args(argv: list[str] | None = None) -> MVPConfig:
     p.add_argument("--max-stocks", type=int, default=50)
     p.add_argument("--max-tasks", type=int, default=8000)
     p.add_argument("--max-tool-calls", type=int, default=4)
+    p.add_argument("--min-tool-calls", type=int, default=0)
+    p.add_argument("--tool-use-bonus", type=float, default=0.0)
+    p.add_argument("--missing-tool-penalty", type=float, default=0.0)
     p.add_argument("--up-quantile", type=float, default=0.70)
     p.add_argument("--down-quantile", type=float, default=0.30)
     p.add_argument("--pnl-scale", type=float, default=0.03)
@@ -206,6 +209,9 @@ def main(
     max_stocks: int = 50,
     max_tasks: int = 8000,
     max_tool_calls: int = 4,
+    min_tool_calls: int = 0,
+    tool_use_bonus: float = 0.0,
+    missing_tool_penalty: float = 0.0,
     up_quantile: float = 0.70,
     down_quantile: float = 0.30,
     pnl_scale: float = 0.03,
@@ -274,6 +280,9 @@ def main(
         max_stocks=max_stocks,
         max_tasks=max_tasks,
         max_tool_calls=max_tool_calls,
+        min_tool_calls=min_tool_calls,
+        tool_use_bonus=tool_use_bonus,
+        missing_tool_penalty=missing_tool_penalty,
         up_quantile=up_quantile,
         down_quantile=down_quantile,
         pnl_scale=pnl_scale,
