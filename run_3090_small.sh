@@ -24,6 +24,7 @@ Options:
   --torch-cuda FLAVOR      cu121|cu124|cu126|cu128|cpu. Default: cu128
   --model-id ID            ModelScope/HuggingFace model id. Default: Qwen/Qwen3-0.6B
   --model-dir DIR          Local model dir. Default: model/Qwen3-0.6B
+  --model-size-limit-mib N  Refuse to run if model dir is larger than this. Default: 6000
   --max-stocks N           Number of SSE50 stocks to use. Default: 20
   --max-tasks N            Max RL tasks. Default: 800
   --sample-stride N        Sampling stride. Default: 8
@@ -60,6 +61,7 @@ DEPENDENCY_POLICY="${DEPENDENCY_POLICY:-compatible}"
 TORCH_CUDA="${TORCH_CUDA:-cu128}"
 MODEL_ID="${MODEL_ID:-Qwen/Qwen3-0.6B}"
 MODEL_DIR="${MODEL_DIR:-model/Qwen3-0.6B}"
+MODEL_SIZE_LIMIT_MIB="${MODEL_SIZE_LIMIT_MIB:-6000}"
 MAX_STOCKS="${MAX_STOCKS:-20}"
 MAX_TASKS="${MAX_TASKS:-800}"
 SAMPLE_STRIDE="${SAMPLE_STRIDE:-8}"
@@ -105,6 +107,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --model-dir)
       MODEL_DIR="$2"
+      shift 2
+      ;;
+    --model-size-limit-mib)
+      MODEL_SIZE_LIMIT_MIB="$2"
       shift 2
       ;;
     --max-stocks)
@@ -157,6 +163,7 @@ echo "Repo: $REPO_ROOT"
 echo "Env mode: $ENV_MODE"
 echo "Model id: $MODEL_ID"
 echo "Model dir: $MODEL_DIR"
+echo "Model size limit: ${MODEL_SIZE_LIMIT_MIB} MiB"
 echo "Data smoke size: max_stocks=$MAX_STOCKS, max_tasks=$MAX_TASKS, sample_stride=$SAMPLE_STRIDE"
 if [[ -z "$TOKEN" ]]; then
   echo "Tushare token: not passed; stock_agent_rl_mvp.py will try local_config.py"
@@ -184,6 +191,42 @@ if [[ "$RUN_SETUP" == "1" ]]; then
   fi
   bash setup_stockverl_env.sh "${SETUP_ARGS[@]}"
 fi
+
+check_small_model_dir() {
+  if [[ ! -d "$MODEL_DIR" ]]; then
+    echo "Model directory does not exist yet: $MODEL_DIR"
+    echo "Run without --no-setup/--no-download-model so the script can download it."
+    exit 1
+  fi
+  if [[ -z "$(find "$MODEL_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]]; then
+    echo "Model directory is empty: $MODEL_DIR"
+    echo "Run without --no-setup/--no-download-model so the script can download it."
+    exit 1
+  fi
+
+  local size_mib
+  size_mib="$(du -sm "$MODEL_DIR" | awk '{print $1}')"
+  echo "Model directory size: ${size_mib} MiB"
+  if [[ "$size_mib" =~ ^[0-9]+$ ]] && (( size_mib > MODEL_SIZE_LIMIT_MIB )); then
+    cat >&2 <<EOF
+ERROR: $MODEL_DIR is ${size_mib} MiB, larger than the single-3090 limit ${MODEL_SIZE_LIMIT_MIB} MiB.
+
+This usually means the directory is mislabeled. For example, your log showed:
+  Qwen3ForCausalLM contains 4.02B parameters
+even though the path was:
+  model/Qwen3-0.6B
+
+Fix on the server:
+  mv "$MODEL_DIR" "${MODEL_DIR}_wrong_4b"
+  bash run_3090_small.sh "YOUR_TUSHARE_TOKEN"
+
+Do not pass --no-setup --no-download-model until the real 0.6B model exists.
+EOF
+    exit 1
+  fi
+}
+
+check_small_model_dir
 
 RUN_ARGS=(
   --env-mode "$ENV_MODE"

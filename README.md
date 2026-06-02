@@ -103,6 +103,13 @@ MODEL_ID=Qwen/Qwen3-1.7B MODEL_DIR=model/Qwen3-1.7B bash run_3090_small.sh "your
 bash run_3090_small.sh "your_token" --no-setup --no-download-model
 ```
 
+如果 3090 small 日志里出现 `Qwen3ForCausalLM contains 4.02B parameters`，但模型路径是 `model/Qwen3-0.6B`，说明服务器上的小模型目录装错了，里面实际是 4B 权重。先挪走错目录，然后重新下载：
+
+```bash
+mv model/Qwen3-0.6B model/Qwen3-0.6B_wrong_4b
+bash run_3090_small.sh "your_token"
+```
+
 `--cn-mirror` prefers China-side mirrors first and falls back automatically:
 
 - pip packages: Tsinghua PyPI -> Aliyun PyPI -> official PyPI
