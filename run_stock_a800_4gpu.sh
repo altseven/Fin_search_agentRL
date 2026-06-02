@@ -455,7 +455,7 @@ fi
 echo "== Stock agent RL training: $A800_PROFILE_LABEL profile =="
 echo "Env: persistent-venv"
 echo "Python: $PYTHON_EXE"
-echo "Detected GPUs: $GPU_COUNT, first-four min memory: ${MIN_GPU_MEM_GB}GB"
+echo "Detected GPUs: $GPU_COUNT, first-${A800_REQUIRED_GPUS} min memory: ${MIN_GPU_MEM_GB}GB"
 echo "Training GPUs: $N_GPUS, rollout TP: $ROLLOUT_TP"
 echo "Batch: train=$TRAIN_BATCH_SIZE, ppo_mini=$PPO_MINI_BATCH_SIZE, ppo_micro_per_gpu=$PPO_MICRO_BATCH_SIZE_PER_GPU, rollout_n=$ROLLOUT_N"
 echo "Prompt/response: $MAX_PROMPT_LENGTH/$MAX_RESPONSE_LENGTH, rollout max model len=$ROLLOUT_MAX_MODEL_LEN"
