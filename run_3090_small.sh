@@ -214,11 +214,14 @@ bash run_stock_agent_rl.sh "${RUN_ARGS[@]}" -- \
   --ppo-micro-batch-size-per-gpu 1 \
   --log-prob-micro-batch-size-per-gpu 1 \
   --rollout-n 2 \
-  --max-prompt-length 1536 \
-  --max-response-length 384 \
-  --rollout-gpu-memory-utilization 0.45 \
-  --rollout-max-model-len 2048 \
-  --rollout-max-num-batched-tokens 4096 \
+  --max-prompt-length 4096 \
+  --max-response-length 256 \
+  --actor-ppo-max-token-len-per-gpu 4352 \
+  --ref-log-prob-max-token-len-per-gpu 4352 \
+  --rollout-log-prob-max-token-len-per-gpu 4352 \
+  --rollout-gpu-memory-utilization 0.50 \
+  --rollout-max-model-len 4352 \
+  --rollout-max-num-batched-tokens 8192 \
   --rollout-agent-num-workers 1 \
   --reward-num-workers 1 \
   --total-epochs 1 \

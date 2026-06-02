@@ -87,7 +87,7 @@ bash setup_stockverl_env.sh --cn-mirror --download-model
 bash run_3090_small.sh "your_token"
 ```
 
-这个脚本默认下载 `Qwen/Qwen3-0.6B` 到 `model/Qwen3-0.6B`，然后调用同一套 full-flow 代码，只是使用单卡 debug 配置、小 batch、较短 prompt/response、较少股票和任务数，并默认加 `--no-fetch-fundamentals` 跳过基本面抓取，避免 Tushare 财务公告日期脏数据打断 smoke test。它仍然会跑数据构造、工具调用、rule baseline、verl GRPO 训练和 reward 评估链路；目标是先跑通和看到 reward 动起来，不是正式效果实验。
+这个脚本默认下载 `Qwen/Qwen3-0.6B` 到 `model/Qwen3-0.6B`，然后调用同一套 full-flow 代码，只是使用单卡 debug 配置、小 batch、较少股票和任务数，并默认加 `--no-fetch-fundamentals` 跳过基本面抓取，避免 Tushare 财务公告日期脏数据打断 smoke test。3090 入口把 prompt budget 设为 `4096`、response budget 设为 `256`，避免工具调用模板把样本全部过滤掉。它仍然会跑数据构造、工具调用、rule baseline、verl GRPO 训练和 reward 评估链路；目标是先跑通和看到 reward 动起来，不是正式效果实验。
 
 完整输出会写到 `output_3090_small.log`，训练入口自己的输出也会继续写到 `output.log`。
 

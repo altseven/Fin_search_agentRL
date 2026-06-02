@@ -107,8 +107,8 @@ cd "{repo}"
   data.train_batch_size={cfg.train_batch_size} \\
   data.max_prompt_length={cfg.max_prompt_length} \\
   data.max_response_length={cfg.max_response_length} \\
-  data.filter_overlong_prompts=True \\
-  data.truncation=error \\
+  data.filter_overlong_prompts=False \\
+  data.truncation=left \\
   data.return_raw_chat=True \\
   +data.apply_chat_template_kwargs.enable_thinking=False \\
   actor_rollout_ref.model.path="{model_path}" \\
