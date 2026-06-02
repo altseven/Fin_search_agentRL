@@ -202,12 +202,12 @@ git pull origin master
 bash run_stock_a800_1gpu.sh "your_token"
 ```
 
-单卡入口默认仍然使用 `Qwen/Qwen3-4B` 跑 full-flow 全参数 GRPO，但会把 batch、worker、rollout 上下文调小，完整日志写到 `output_a800_1gpu.log`。你的 `ubuntu22.04-pytorch2.3.0-py3.10-gpu-cuda12.4.1...` 镜像可以优先用这个入口；脚本会默认偏向 `cu124` wheel，并继续把 venv/cache/model 放在 `/kunlun_data/temp_ag_rl/` 下复用。
+单卡入口默认使用 `Qwen/Qwen3-1.7B` 跑 full-flow GRPO，并把 batch、worker、rollout 上下文和 vLLM KV cache 都调小，完整日志写到 `output_a800_1gpu.log`。你的 `ubuntu22.04-pytorch2.3.0-py3.10-gpu-cuda12.4.1...` 镜像可以优先用这个入口；脚本会默认偏向 `cu124` wheel，并继续把 venv/cache/model 放在 `/kunlun_data/temp_ag_rl/` 下复用。
 
-如果只想更稳地 smoke test，可以把模型降到 `Qwen3-1.7B`：
+如果单卡环境已经稳定，想重新尝试 `Qwen3-4B`，再显式覆盖：
 
 ```bash
-MODEL_ID=Qwen/Qwen3-1.7B MODEL_DIR=/kunlun_data/temp_ag_rl/model/Qwen3-1.7B bash run_stock_a800_1gpu.sh "your_token"
+MODEL_ID=Qwen/Qwen3-4B MODEL_DIR=/kunlun_data/temp_ag_rl/model/Qwen3-4B bash run_stock_a800_1gpu.sh "your_token"
 ```
 
 如果使用已经预装 verl/vLLM/flash-attn 的镜像，例如 `openclaw-rl`，先验证环境：

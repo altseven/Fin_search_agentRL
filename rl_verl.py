@@ -140,10 +140,11 @@ cd "{repo}"
   actor_rollout_ref.rollout.name=vllm \\
   actor_rollout_ref.rollout.tensor_model_parallel_size={cfg.rollout_tp} \\
   actor_rollout_ref.rollout.gpu_memory_utilization={cfg.rollout_gpu_memory_utilization} \\
+  actor_rollout_ref.rollout.enforce_eager=True \\
   actor_rollout_ref.rollout.max_model_len={rollout_max_model_len} \\
   actor_rollout_ref.rollout.max_num_batched_tokens={rollout_max_num_batched_tokens} \\
-  actor_rollout_ref.rollout.enable_chunked_prefill=True \\
-  actor_rollout_ref.rollout.enable_prefix_caching=True \\
+  actor_rollout_ref.rollout.enable_chunked_prefill=False \\
+  actor_rollout_ref.rollout.enable_prefix_caching=False \\
   actor_rollout_ref.rollout.n={cfg.rollout_n} \\
   actor_rollout_ref.rollout.load_format=safetensors \\
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu={cfg.log_prob_micro_batch_size_per_gpu} \\
