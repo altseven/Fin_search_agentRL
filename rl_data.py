@@ -122,6 +122,27 @@ def _safe_float(x: Any, default: float | None = None) -> float | None:
         return default
 
 
+def _coalesced_column(df: "pd.DataFrame", name: str) -> "pd.Series":
+    selected = df.loc[:, name]
+    if isinstance(selected, pd.DataFrame):
+        return selected.bfill(axis=1).iloc[:, 0].rename(name)
+    return selected
+
+
+def _coalesce_duplicate_columns(df: "pd.DataFrame") -> "pd.DataFrame":
+    if not df.columns.has_duplicates:
+        return df
+
+    seen: set[str] = set()
+    columns = []
+    for name in df.columns:
+        if name in seen:
+            continue
+        seen.add(name)
+        columns.append(_coalesced_column(df, name).rename(name))
+    return pd.concat(columns, axis=1)
+
+
 def get_sse50_universe(pro: Any, cfg: MVPConfig, dirs: dict[str, Path]) -> "pd.DataFrame":
     require_pandas()
     index_date = normalize_date(cfg.index_date)
@@ -522,6 +543,7 @@ def build_fundamental_snapshot(
                     "debt_to_assets": "debt_ratio",
                 }
                 fina_all = fina_all.rename(columns={k: v for k, v in rename.items() if k in fina_all.columns})
+                fina_all = _coalesce_duplicate_columns(fina_all)
                 keep = [
                     c
                     for c in [
@@ -569,7 +591,9 @@ def build_fundamental_snapshot(
                         )
                         for col in ["revenue_yoy", "net_profit_yoy", "gross_margin", "roe", "debt_ratio"]:
                             if f"{col}_y" in merged.columns:
-                                merged[col] = merged[f"{col}_y"].combine_first(merged.get(f"{col}_x"))
+                                right = _coalesced_column(merged, f"{col}_y")
+                                left = _coalesced_column(merged, f"{col}_x") if f"{col}_x" in merged.columns else None
+                                merged[col] = right.combine_first(left) if left is not None else right
                             elif col not in merged.columns:
                                 merged[col] = float("nan")
                         if "end_date" in merged.columns:
