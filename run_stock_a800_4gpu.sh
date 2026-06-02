@@ -10,9 +10,10 @@ Four-A800 smoke/full-flow entry for Qwen3-4B GRPO training.
 
 Default behavior:
   - use setup_stockverl_env.sh in compatible mode
+  - keep env/cache/model under the persistent parent directory of this repo
   - prefer China mirrors for pip/PyTorch/model downloads
   - install flash-attn, because current verl training imports flash_attn.bert_padding
-  - download Qwen/Qwen3-4B to model/Qwen3-4B
+  - download Qwen/Qwen3-4B to <persist-root>/model/Qwen3-4B
   - require at least 4 GPUs with 70GB+ memory each
   - run full-flow data build, rule baseline, verl GRPO training, and report generation
 
@@ -24,7 +25,8 @@ Options:
   --dependency-policy P    compatible|strict. Default: compatible
   --torch-cuda FLAVOR      cu121|cu124|cu126|cu128|cpu. Default: cu128
   --model-id ID            ModelScope/HuggingFace model id. Default: Qwen/Qwen3-4B
-  --model-dir DIR          Local model dir. Default: model/Qwen3-4B
+  --model-dir DIR          Local model dir. Default: <persist-root>/model/Qwen3-4B
+  --persist-root DIR       Persistent root. Default: parent of repo, e.g. /kunlun_data/temp_ag_rl
   --no-setup               Skip environment setup and model download
   --no-cn-mirror           Do not prefer China mirrors
   --no-download-model      Do not download Qwen3-4B during setup
@@ -40,6 +42,7 @@ EOF
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
+DEFAULT_PERSIST_ROOT="$(cd "$REPO_ROOT/.." && pwd)"
 
 LOG_FILE="$REPO_ROOT/output_a800_4gpu.log"
 if [[ -z "${STOCK_AGENT_A800_4GPU_LOGGING_STARTED:-}" ]]; then
@@ -51,6 +54,7 @@ fi
 echo "== Logging to $LOG_FILE =="
 
 TOKEN="${TUSHARE_TOKEN:-}"
+PERSIST_ROOT="${STOCK_AGENT_PERSIST_ROOT:-$DEFAULT_PERSIST_ROOT}"
 ENV_MODE="${ENV_MODE:-auto}"
 ENV_NAME="${ENV_NAME:-stockverl}"
 PYTHON_BIN="${PYTHON_BIN:-}"
@@ -58,7 +62,7 @@ REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-requirements-stockverl.txt}"
 DEPENDENCY_POLICY="${DEPENDENCY_POLICY:-compatible}"
 TORCH_CUDA="${TORCH_CUDA:-cu128}"
 MODEL_ID="${MODEL_ID:-Qwen/Qwen3-4B}"
-MODEL_DIR="${MODEL_DIR:-model/Qwen3-4B}"
+MODEL_DIR="${MODEL_DIR:-$PERSIST_ROOT/model/Qwen3-4B}"
 RUN_SETUP=1
 USE_CN_MIRROR=1
 DOWNLOAD_MODEL=1
@@ -102,6 +106,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --model-dir)
       MODEL_DIR="$2"
+      MODEL_DIR_SET_BY_USER=1
+      shift 2
+      ;;
+    --persist-root)
+      PERSIST_ROOT="$2"
+      if [[ -z "${MODEL_DIR_SET_BY_USER:-}" ]]; then
+        MODEL_DIR="$PERSIST_ROOT/model/Qwen3-4B"
+      fi
       shift 2
       ;;
     --no-setup)
@@ -141,6 +153,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+PERSIST_ROOT="$(mkdir -p "$PERSIST_ROOT" && cd "$PERSIST_ROOT" && pwd)"
+PERSISTENT_VENV_DIR="${STOCK_AGENT_VENV_DIR:-$PERSIST_ROOT/venvs/$ENV_NAME}"
+export CACHE_ROOT="${CACHE_ROOT:-$PERSIST_ROOT/.cache}"
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$CACHE_ROOT/pip}"
+export HF_HOME="${HF_HOME:-$CACHE_ROOT/huggingface}"
+export MODELSCOPE_CACHE="${MODELSCOPE_CACHE:-$CACHE_ROOT/modelscope}"
+export CONDA_ENVS_PATH="${CONDA_ENVS_PATH:-$PERSIST_ROOT/envs}"
+export CONDA_PKGS_DIRS="${CONDA_PKGS_DIRS:-$CACHE_ROOT/conda_pkgs}"
+mkdir -p "$CACHE_ROOT" "$PIP_CACHE_DIR" "$HF_HOME" "$MODELSCOPE_CACHE" "$CONDA_ENVS_PATH" "$CONDA_PKGS_DIRS" "$PERSIST_ROOT/model" "$PERSIST_ROOT/venvs"
+
 case "$ENV_MODE" in
   auto|conda|system) ;;
   *)
@@ -167,8 +189,12 @@ esac
 
 echo "== A800 4-GPU stock agent RL run =="
 echo "Repo: $REPO_ROOT"
+echo "Persistent root: $PERSIST_ROOT"
 echo "Env mode: $ENV_MODE"
 echo "Conda env: $ENV_NAME"
+echo "Conda envs path: $CONDA_ENVS_PATH"
+echo "Persistent venv fallback: $PERSISTENT_VENV_DIR"
+echo "Cache root: $CACHE_ROOT"
 echo "Model id: $MODEL_ID"
 echo "Model dir: $MODEL_DIR"
 echo "Install flash-attn: $INSTALL_FLASH_ATTN"
@@ -178,6 +204,61 @@ else
   echo "Tushare token: passed by argument/env"
 fi
 echo
+
+load_conda() {
+  if command -v conda >/dev/null 2>&1; then
+    return 0
+  fi
+  for conda_sh in \
+    "$HOME/miniconda3/etc/profile.d/conda.sh" \
+    "$HOME/anaconda3/etc/profile.d/conda.sh" \
+    "/opt/conda/etc/profile.d/conda.sh"; do
+    if [[ -f "$conda_sh" ]]; then
+      # shellcheck disable=SC1090
+      set +u
+      source "$conda_sh"
+      set -u
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_base_python_bin() {
+  for py in python3.10 python3 python; do
+    if command -v "$py" >/dev/null 2>&1; then
+      command -v "$py"
+      return 0
+    fi
+  done
+  return 1
+}
+
+prepare_persistent_python_mode() {
+  if [[ "$ENV_MODE" != "auto" ]]; then
+    return 0
+  fi
+  if load_conda && command -v conda >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -z "$PYTHON_BIN" ]]; then
+    if [[ ! -x "$PERSISTENT_VENV_DIR/bin/python" ]]; then
+      local base_python
+      base_python="$(find_base_python_bin)" || {
+        echo "No usable Python found for creating persistent venv." >&2
+        return 1
+      }
+      echo "== Creating persistent venv fallback: $PERSISTENT_VENV_DIR =="
+      "$base_python" -m venv "$PERSISTENT_VENV_DIR"
+    else
+      echo "== Reusing persistent venv fallback: $PERSISTENT_VENV_DIR =="
+    fi
+    PYTHON_BIN="$PERSISTENT_VENV_DIR/bin/python"
+  fi
+  ENV_MODE="system"
+}
+
+prepare_persistent_python_mode
 
 if [[ "$RUN_SETUP" == "1" ]]; then
   SETUP_ARGS=(
@@ -201,25 +282,6 @@ if [[ "$RUN_SETUP" == "1" ]]; then
   fi
   bash setup_stockverl_env.sh "${SETUP_ARGS[@]}"
 fi
-
-load_conda() {
-  if command -v conda >/dev/null 2>&1; then
-    return 0
-  fi
-  for conda_sh in \
-    "$HOME/miniconda3/etc/profile.d/conda.sh" \
-    "$HOME/anaconda3/etc/profile.d/conda.sh" \
-    "/opt/conda/etc/profile.d/conda.sh"; do
-    if [[ -f "$conda_sh" ]]; then
-      # shellcheck disable=SC1090
-      set +u
-      source "$conda_sh"
-      set -u
-      return 0
-    fi
-  done
-  return 1
-}
 
 find_python_bin() {
   if [[ -n "$PYTHON_BIN" ]]; then
