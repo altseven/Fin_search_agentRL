@@ -337,6 +337,12 @@ for label, module_name in packages:
             for i in range(mod.cuda.device_count()):
                 props = mod.cuda.get_device_properties(i)
                 print(f"gpu[{i}]: {props.name}, {props.total_memory / 1024**3:.1f} GB")
+        elif module_name == "vllm":
+            from vllm import LLM  # noqa: F401
+            print("vllm.LLM import: ok")
+        elif module_name == "flash_attn":
+            from flash_attn.bert_padding import pad_input, unpad_input  # noqa: F401
+            print("flash_attn.bert_padding import: ok")
     except Exception as exc:
         print(f"{label}: IMPORT_ERROR {type(exc).__name__}: {exc}")
 PY
@@ -514,6 +520,10 @@ for raw in open(path, encoding="utf-8"):
         continue
     try:
         importlib.import_module(module_name)
+        if package == "vllm":
+            from vllm import LLM  # noqa: F401
+        elif package == "flash-attn":
+            from flash_attn.bert_padding import pad_input, unpad_input  # noqa: F401
     except Exception as exc:
         to_install.append(line)
         broken.append(f"{package}: installed {installed}, import failed: {type(exc).__name__}: {exc}")
@@ -681,6 +691,9 @@ for name in mods:
     mod = importlib.import_module(name)
     version = getattr(mod, "__version__", "unknown")
     print(f"{name}: {version}")
+    if name == "vllm":
+        from vllm import LLM  # noqa: F401
+        print("vllm.LLM import: ok")
 
 import torch
 print("torch.cuda.is_available:", torch.cuda.is_available())

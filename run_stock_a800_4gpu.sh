@@ -425,7 +425,9 @@ done
 
 if ! "$PYTHON_CMD" - <<'PY'
 import flash_attn
+from flash_attn.bert_padding import pad_input, unpad_input  # noqa: F401
 print("flash_attn:", getattr(flash_attn, "__version__", "unknown"))
+print("flash_attn.bert_padding: ok")
 PY
 then
   cat >&2 <<'EOF'
@@ -438,6 +440,32 @@ Fix:
   bash run_stock_a800_4gpu.sh "YOUR_TOKEN"
 
 Do not use --no-setup unless flash-attn is already installed.
+EOF
+  exit 1
+fi
+
+if ! "$PYTHON_CMD" - <<'PY'
+import vllm
+from vllm import LLM  # noqa: F401
+
+print("vllm:", getattr(vllm, "__version__", "unknown"))
+print("vllm.LLM import: ok")
+PY
+then
+  cat >&2 <<EOF
+vLLM is installed but its compiled CUDA extension cannot be loaded.
+
+Your latest log showed:
+  ImportError: libcudart.so.13: cannot open shared object file
+
+That means the active vLLM wheel expects a CUDA 13 runtime, while this
+environment is using a CUDA 12.x/PyTorch cu12x stack. The 3090-small run worked
+because it used a different conda environment with matching vLLM/Torch/CUDA.
+
+Fix:
+  bash run_stock_a800_4gpu.sh "YOUR_TOKEN" --python-bin "$PYTHON_CMD" --no-install-flash-attn
+
+Do not use --no-setup until this preflight prints "vllm.LLM import: ok".
 EOF
   exit 1
 fi
