@@ -74,6 +74,7 @@ def make_verl_command(cfg: MVPConfig, train_path: Path, valid_path: Path) -> str
     data_root = Path(cfg.data_dir).expanduser().resolve()
     run_root = Path(cfg.run_dir).expanduser().resolve() if cfg.run_dir else train_path.parent.parent.resolve()
     verl_file_logger_path = run_root / "verl" / "training_metrics.jsonl"
+    checkpoint_dir = run_root / "verl" / "checkpoints"
     model_path = resolve_model_path_for_command(cfg.model_path)
     python_bin = Path(sys.executable).resolve()
     total_seq_len = int(cfg.max_prompt_length) + int(cfg.max_response_length)
@@ -165,6 +166,8 @@ cd "{repo}"
   trainer.logger='["console","file"]' \\
   trainer.project_name=stock_agent_rl_mvp \\
   trainer.experiment_name=qwen3_4b_sse50_grpo_full \\
+  trainer.resume_mode=disable \\
+  trainer.default_local_dir="{checkpoint_dir}" \\
   trainer.n_gpus_per_node={cfg.n_gpus_per_node} \\
   trainer.nnodes=1 \\
   trainer.save_freq=5 \\

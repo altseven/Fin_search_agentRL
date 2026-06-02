@@ -233,6 +233,8 @@ Each run writes reports under:
 result/<HHMMSS_MMDD_result>/report/
 ```
 
+Training checkpoints are also isolated per run under `result/<HHMMSS_MMDD_result>/verl/checkpoints/`, and the generated verl command disables automatic resume so stale checkpoints in `verl-main/checkpoints/` will not be loaded accidentally.
+
 Important report files:
 
 - `stock_agent_rl_report.pdf`: detailed mentor-ready report with workflow, data, tools, reward design, training curves, diagnostics, and interpretation notes.
