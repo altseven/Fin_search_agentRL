@@ -175,13 +175,14 @@ bash run_stock_a800_4gpu.sh "your_token"
 因为每次云任务都会重新分配容器，但 `/kunlun_data/` 会持久挂载，4 卡入口默认把可复用内容放在项目父目录 `/kunlun_data/temp_ag_rl/`：
 
 ```text
-/kunlun_data/temp_ag_rl/envs/stockverl        # conda env if conda exists
-/kunlun_data/temp_ag_rl/venvs/stockverl       # venv fallback if conda does not exist
-/kunlun_data/temp_ag_rl/.cache/               # pip/HF/ModelScope/conda package caches
+/kunlun_data/temp_ag_rl/venvs/stockverl       # persistent Python venv
+/kunlun_data/temp_ag_rl/.cache/               # pip/HF/ModelScope caches
 /kunlun_data/temp_ag_rl/model/Qwen3-4B        # model weights
 ```
 
-第一次运行仍然会安装依赖和下载模型；后续新任务挂载同一个 `/kunlun_data/` 后会复用这些目录，启动会快很多。不要轻易加 `--env-mode system`，否则可能又把包安装到临时容器里。
+第一次运行仍然会安装依赖和下载模型；后续新任务挂载同一个 `/kunlun_data/` 后会复用这些目录，启动会快很多。这个入口固定使用持久化 venv，不走 conda。
+
+如果镜像缺少 `python3.10-venv`/`ensurepip`，4 卡入口会在 root + apt 可用时自动安装 `python3-venv` 和 `python3-pip`，再创建持久 venv。
 
 Advanced direct Python entry:
 

@@ -18,9 +18,9 @@ Default behavior:
   - run full-flow data build, rule baseline, verl GRPO training, and report generation
 
 Options:
-  --env-mode MODE          auto|conda|system. Default: auto
-  --env-name NAME          Conda env name. Default: stockverl
-  --python-bin PATH        Python executable for system mode
+  --env-mode MODE          system only. Kept for compatibility. Default: system
+  --env-name NAME          Persistent venv name. Default: stockverl
+  --python-bin PATH        Python executable. Default: <persist-root>/venvs/<env-name>/bin/python
   --requirements PATH      Requirements file. Default: requirements-stockverl.txt
   --dependency-policy P    compatible|strict. Default: compatible
   --torch-cuda FLAVOR      cu121|cu124|cu126|cu128|cpu. Default: cu128
@@ -55,7 +55,7 @@ echo "== Logging to $LOG_FILE =="
 
 TOKEN="${TUSHARE_TOKEN:-}"
 PERSIST_ROOT="${STOCK_AGENT_PERSIST_ROOT:-$DEFAULT_PERSIST_ROOT}"
-ENV_MODE="${ENV_MODE:-auto}"
+ENV_MODE="${ENV_MODE:-system}"
 ENV_NAME="${ENV_NAME:-stockverl}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-requirements-stockverl.txt}"
@@ -159,17 +159,16 @@ export CACHE_ROOT="${CACHE_ROOT:-$PERSIST_ROOT/.cache}"
 export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$CACHE_ROOT/pip}"
 export HF_HOME="${HF_HOME:-$CACHE_ROOT/huggingface}"
 export MODELSCOPE_CACHE="${MODELSCOPE_CACHE:-$CACHE_ROOT/modelscope}"
-export CONDA_ENVS_PATH="${CONDA_ENVS_PATH:-$PERSIST_ROOT/envs}"
-export CONDA_PKGS_DIRS="${CONDA_PKGS_DIRS:-$CACHE_ROOT/conda_pkgs}"
-mkdir -p "$CACHE_ROOT" "$PIP_CACHE_DIR" "$HF_HOME" "$MODELSCOPE_CACHE" "$CONDA_ENVS_PATH" "$CONDA_PKGS_DIRS" "$PERSIST_ROOT/model" "$PERSIST_ROOT/venvs"
+mkdir -p "$CACHE_ROOT" "$PIP_CACHE_DIR" "$HF_HOME" "$MODELSCOPE_CACHE" "$PERSIST_ROOT/model" "$PERSIST_ROOT/venvs"
 
 case "$ENV_MODE" in
-  auto|conda|system) ;;
+  system|auto) ;;
   *)
-    echo "--env-mode must be one of: auto, conda, system" >&2
+    echo "--env-mode must be system for run_stock_a800_4gpu.sh. This server workflow does not use conda." >&2
     exit 2
     ;;
 esac
+ENV_MODE="system"
 
 case "$DEPENDENCY_POLICY" in
   compatible|strict) ;;
@@ -191,9 +190,8 @@ echo "== A800 4-GPU stock agent RL run =="
 echo "Repo: $REPO_ROOT"
 echo "Persistent root: $PERSIST_ROOT"
 echo "Env mode: $ENV_MODE"
-echo "Conda env: $ENV_NAME"
-echo "Conda envs path: $CONDA_ENVS_PATH"
-echo "Persistent venv fallback: $PERSISTENT_VENV_DIR"
+echo "Persistent venv name: $ENV_NAME"
+echo "Persistent venv: $PERSISTENT_VENV_DIR"
 echo "Cache root: $CACHE_ROOT"
 echo "Model id: $MODEL_ID"
 echo "Model dir: $MODEL_DIR"
@@ -205,25 +203,6 @@ else
 fi
 echo
 
-load_conda() {
-  if command -v conda >/dev/null 2>&1; then
-    return 0
-  fi
-  for conda_sh in \
-    "$HOME/miniconda3/etc/profile.d/conda.sh" \
-    "$HOME/anaconda3/etc/profile.d/conda.sh" \
-    "/opt/conda/etc/profile.d/conda.sh"; do
-    if [[ -f "$conda_sh" ]]; then
-      # shellcheck disable=SC1090
-      set +u
-      source "$conda_sh"
-      set -u
-      return 0
-    fi
-  done
-  return 1
-}
-
 find_base_python_bin() {
   for py in python3.10 python3 python; do
     if command -v "$py" >/dev/null 2>&1; then
@@ -234,24 +213,79 @@ find_base_python_bin() {
   return 1
 }
 
+install_python_venv_support() {
+  local base_python="$1"
+  if ! command -v apt-get >/dev/null 2>&1 || [[ "$(id -u)" != "0" ]]; then
+    return 1
+  fi
+
+  local py_mm
+  py_mm="$("$base_python" - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)"
+
+  echo "== Installing Python venv/pip support via apt-get =="
+  echo "Python version for venv: $py_mm"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  if apt-get install -y "python${py_mm}-venv" python3-venv python3-pip; then
+    return 0
+  fi
+  echo "WARNING: version-specific venv package install failed; trying generic packages." >&2
+  apt-get install -y python3-venv python3-pip
+}
+
+venv_is_usable() {
+  [[ -x "$PERSISTENT_VENV_DIR/bin/python" ]] && "$PERSISTENT_VENV_DIR/bin/python" -m pip --version >/dev/null 2>&1
+}
+
+create_persistent_venv() {
+  local base_python="$1"
+  echo "== Creating persistent venv: $PERSISTENT_VENV_DIR =="
+  if "$base_python" -m venv "$PERSISTENT_VENV_DIR" && venv_is_usable; then
+    return 0
+  fi
+
+  echo "WARNING: Python venv creation failed or pip is missing; trying to install venv support." >&2
+  rm -rf "$PERSISTENT_VENV_DIR"
+  if install_python_venv_support "$base_python"; then
+    "$base_python" -m venv "$PERSISTENT_VENV_DIR"
+  else
+    cat >&2 <<EOF
+Could not create a persistent venv because this image lacks ensurepip/python-venv support.
+
+Automatic apt-get installation was not available. Use an image with python venv support, or install:
+  apt-get update && apt-get install -y python3-venv python3-pip
+
+Then rerun:
+  bash run_stock_a800_4gpu.sh "YOUR_TOKEN"
+EOF
+    return 1
+  fi
+
+  if ! venv_is_usable; then
+    echo "Persistent venv was created but pip is still unavailable: $PERSISTENT_VENV_DIR" >&2
+    return 1
+  fi
+}
+
 prepare_persistent_python_mode() {
-  if [[ "$ENV_MODE" != "auto" ]]; then
-    return 0
-  fi
-  if load_conda && command -v conda >/dev/null 2>&1; then
-    return 0
-  fi
   if [[ -z "$PYTHON_BIN" ]]; then
-    if [[ ! -x "$PERSISTENT_VENV_DIR/bin/python" ]]; then
+    if venv_is_usable; then
+      echo "== Reusing persistent venv: $PERSISTENT_VENV_DIR =="
+    else
       local base_python
       base_python="$(find_base_python_bin)" || {
         echo "No usable Python found for creating persistent venv." >&2
         return 1
       }
-      echo "== Creating persistent venv fallback: $PERSISTENT_VENV_DIR =="
-      "$base_python" -m venv "$PERSISTENT_VENV_DIR"
-    else
-      echo "== Reusing persistent venv fallback: $PERSISTENT_VENV_DIR =="
+      if [[ -d "$PERSISTENT_VENV_DIR" ]]; then
+        echo "== Removing broken persistent venv: $PERSISTENT_VENV_DIR =="
+        rm -rf "$PERSISTENT_VENV_DIR"
+      fi
+      create_persistent_venv "$base_python"
     fi
     PYTHON_BIN="$PERSISTENT_VENV_DIR/bin/python"
   fi
@@ -306,25 +340,7 @@ find_python_bin() {
   return 1
 }
 
-USE_CONDA=0
-if [[ "$ENV_MODE" == "conda" || "$ENV_MODE" == "auto" ]]; then
-  if load_conda && command -v conda >/dev/null 2>&1; then
-    USE_CONDA=1
-  elif [[ "$ENV_MODE" == "conda" ]]; then
-    echo "conda not found, but --env-mode conda was requested." >&2
-    exit 1
-  fi
-fi
-
-if [[ "$USE_CONDA" == "1" ]]; then
-  set +u
-  eval "$(conda shell.bash hook)"
-  conda activate "$ENV_NAME"
-  set -u
-  PYTHON_CMD="python"
-else
-  PYTHON_CMD="$(find_python_bin)"
-fi
+PYTHON_CMD="$(find_python_bin)"
 
 PYTHON_EXE="$("$PYTHON_CMD" -c 'import sys; print(sys.executable)')"
 
@@ -394,11 +410,7 @@ if [[ "$DOWNLOAD_MODEL" == "1" ]]; then
 fi
 
 echo "== Stock agent RL training: A800 4-GPU profile =="
-if [[ "$USE_CONDA" == "1" ]]; then
-  echo "Env: conda:$ENV_NAME"
-else
-  echo "Env: system-python"
-fi
+echo "Env: persistent-venv"
 echo "Python: $PYTHON_EXE"
 echo "Detected GPUs: $GPU_COUNT, first-four min memory: ${MIN_GPU_MEM_GB}GB"
 echo "Training GPUs: $N_GPUS, rollout TP: $ROLLOUT_TP"
