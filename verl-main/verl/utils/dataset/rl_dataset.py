@@ -25,6 +25,7 @@ from typing import Any, Optional
 
 import datasets
 import numpy as np
+import pandas as pd
 import torch
 from omegaconf import DictConfig, ListConfig
 from PIL import Image
@@ -35,6 +36,21 @@ from verl.utils.import_utils import load_extern_object
 from verl.utils.tokenizer import build_multimodal_processor_inputs, normalize_token_ids
 
 logger = logging.getLogger(__name__)
+
+
+def _load_dataset_file_without_hf_builder_cache(data_file: str) -> datasets.Dataset:
+    """Load local parquet/json files without HuggingFace builder cache locks.
+
+    Some cloud images/filesystems can fail inside datasets.load_dataset(...), not
+    while parsing the file, but while releasing the FileLock used by the HF
+    builder cache. Local run-generated files do not need that cache, so read
+    them directly and wrap the DataFrame as a Dataset.
+    """
+    if data_file.endswith(".parquet"):
+        return datasets.Dataset.from_pandas(pd.read_parquet(data_file), preserve_index=False)
+    if data_file.endswith(".json") or data_file.endswith(".jsonl"):
+        return datasets.Dataset.from_pandas(pd.read_json(data_file, lines=data_file.endswith(".jsonl")), preserve_index=False)
+    raise ValueError(f"Unsupported file format: {data_file}")
 
 
 def collate_fn(data_list: list[dict]) -> dict:
@@ -167,12 +183,7 @@ class RLHFDataset(Dataset):
         dataframes = []
         for parquet_file in self.data_files:
             # read files and cache
-            if parquet_file.endswith(".parquet"):
-                dataframe = datasets.load_dataset("parquet", data_files=parquet_file)["train"]
-            elif parquet_file.endswith(".json") or parquet_file.endswith(".jsonl"):
-                dataframe = datasets.load_dataset("json", data_files=parquet_file)["train"]
-            else:
-                raise ValueError(f"Unsupported file format: {parquet_file}")
+            dataframe = _load_dataset_file_without_hf_builder_cache(parquet_file)
             dataframes.append(dataframe)
         self.dataframe: datasets.Dataset = datasets.concatenate_datasets(dataframes)
 

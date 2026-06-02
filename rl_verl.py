@@ -74,6 +74,7 @@ def make_verl_command(cfg: MVPConfig, train_path: Path, valid_path: Path) -> str
     data_root = Path(cfg.data_dir).expanduser().resolve()
     run_root = Path(cfg.run_dir).expanduser().resolve() if cfg.run_dir else train_path.parent.parent.resolve()
     verl_file_logger_path = run_root / "verl" / "training_metrics.jsonl"
+    hf_datasets_cache = run_root / "verl" / "hf_datasets_cache"
     checkpoint_dir = run_root / "verl" / "checkpoints"
     model_path = resolve_model_path_for_command(cfg.model_path)
     python_bin = Path(sys.executable).resolve()
@@ -99,6 +100,8 @@ export PYTHONPATH="{project_root}:{repo}:${{PYTHONPATH:-}}"
 export STOCK_AGENT_DATA_DIR="{data_root}"
 export HYDRA_FULL_ERROR=1
 export VERL_FILE_LOGGER_PATH="{verl_file_logger_path}"
+export HF_DATASETS_CACHE="{hf_datasets_cache}"
+export HF_HUB_DISABLE_TELEMETRY=1
 
 cd "{repo}"
 "{python_bin}" -m ray.scripts.scripts stop --force || true
