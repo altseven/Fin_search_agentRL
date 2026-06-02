@@ -184,6 +184,34 @@ bash run_stock_a800_4gpu.sh "your_token"
 
 如果镜像缺少 `python3.10-venv`/`ensurepip`，4 卡入口会在 root + apt 可用时自动安装 `python3-venv` 和 `python3-pip`，再创建持久 venv。
 
+如果当前只拿到 2 卡 A800，可以用更小的 2 卡入口先跑通：
+
+```bash
+cd /kunlun_data/temp_ag_rl/Fin_search_agentRL
+git pull origin master
+bash run_stock_a800_2gpu.sh "your_token"
+```
+
+这个入口复用同一套持久化 venv/cache/model 目录，但默认改成 `n_gpus_per_node=2`、`rollout_tp=1`、更小 batch、`rollout_n=2`、`max_tasks=4000`。完整日志写到 `output_a800_2gpu.log`。
+
+如果使用已经预装 verl/vLLM/flash-attn 的镜像，例如 `openclaw-rl`，先验证环境：
+
+```bash
+python - <<'PY'
+import torch, ray, vllm, flash_attn
+print("torch:", torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.device_count())
+print("ray:", ray.__version__)
+print("vllm:", vllm.__version__)
+print("flash_attn:", flash_attn.__version__)
+PY
+```
+
+如果验证通过，并且 `/kunlun_data/temp_ag_rl/model/Qwen3-4B` 已存在，可以直接复用镜像里的 Python 环境：
+
+```bash
+bash run_stock_a800_2gpu.sh "your_token" --python-bin "$(which python)" --no-setup --no-download-model
+```
+
 Advanced direct Python entry:
 
 ```bash

@@ -600,7 +600,7 @@ PY
 if [[ "$INSTALL_FLASH_ATTN" == "1" ]]; then
   echo "== Installing flash-attn =="
   echo "This can take a long time and may fail if CUDA/Torch/compiler versions do not match."
-  MAX_JOBS="${MAX_JOBS:-8}" pip_install flash-attn --no-build-isolation
+  MAX_JOBS="${MAX_JOBS:-8}" pip_install flash-attn --no-build-isolation --no-deps
 else
   echo "== Skipping flash-attn =="
   echo "Current MVP defaults to --attn-implementation sdpa, so flash-attn is optional."
