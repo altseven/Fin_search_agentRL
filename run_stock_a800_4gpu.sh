@@ -364,6 +364,30 @@ PYTHON_CMD="$(find_python_bin)"
 
 PYTHON_EXE="$("$PYTHON_CMD" -c 'import sys; print(sys.executable)')"
 
+if [[ -n "${STOCK_AGENT_REQUIRE_PYTHON_MINOR:-}" ]]; then
+  PYTHON_MINOR="$("$PYTHON_CMD" - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)"
+  if [[ "$PYTHON_MINOR" != "$STOCK_AGENT_REQUIRE_PYTHON_MINOR" ]]; then
+    cat >&2 <<EOF
+This profile requires Python $STOCK_AGENT_REQUIRE_PYTHON_MINOR, but the selected Python is $PYTHON_MINOR:
+  $PYTHON_EXE
+
+The A800 single-GPU cloud failures have been coming from the Python 3.12 +
+vLLM/Ray stack. Use the script-managed persistent venv, or explicitly pass a
+Python 3.10 executable:
+
+  bash run_stock_a800_1gpu.sh "YOUR_TOKEN"
+  bash run_stock_a800_1gpu.sh "YOUR_TOKEN" --python-bin "\$(command -v python3.10)"
+
+Do not pass --python-bin "\$(which python)" unless it resolves to Python 3.10.
+EOF
+    exit 1
+  fi
+fi
+
 readarray -t PROFILE_LINES < <(
 STOCK_AGENT_A800_REQUIRED_GPUS="$A800_REQUIRED_GPUS" \
 STOCK_AGENT_A800_N_GPUS="$A800_N_GPUS" \

@@ -202,7 +202,19 @@ git pull origin master
 bash run_stock_a800_1gpu.sh "your_token"
 ```
 
-单卡入口默认使用 `Qwen/Qwen3-1.7B` 跑 full-flow GRPO，并把 batch、worker、rollout 上下文和 vLLM KV cache 都调小，完整日志写到 `output_a800_1gpu.log`。你的 `ubuntu22.04-pytorch2.3.0-py3.10-gpu-cuda12.4.1...` 镜像可以优先用这个入口；脚本会默认偏向 `cu124` wheel，并继续把 venv/cache/model 放在 `/kunlun_data/temp_ag_rl/` 下复用。
+单卡入口默认使用 `Qwen/Qwen3-0.6B` 跑 full-flow GRPO，并把 batch、worker、rollout 上下文和 vLLM KV cache 都调小，完整日志写到 `output_a800_1gpu.log`。这个入口的目标是先把云 A800 的 veRL/vLLM 路径稳定跑通，不追求最终效果。脚本默认要求 Python 3.10，避免误用云镜像里的 Python 3.12 + vLLM 组合导致 engine core 反复初始化失败。
+
+不要在这个入口里传 `--python-bin "$(which python)"`，除非它确定是 Python 3.10。优先直接运行脚本，让它使用 `/kunlun_data/temp_ag_rl/venvs/stockverl` 持久环境：
+
+```bash
+bash run_stock_a800_1gpu.sh "your_token" -- --no-fetch-fundamentals --no-fetch-optional-docs
+```
+
+如果你确定镜像里有 `python3.10`，也可以显式指定：
+
+```bash
+bash run_stock_a800_1gpu.sh "your_token" --python-bin "$(command -v python3.10)" -- --no-fetch-fundamentals --no-fetch-optional-docs
+```
 
 如果单卡环境已经稳定，想重新尝试 `Qwen3-4B`，再显式覆盖：
 
