@@ -172,6 +172,42 @@ else
 fi
 echo
 
+model_dir_size_mib() {
+  du -sm "$MODEL_DIR" | awk '{print $1}'
+}
+
+model_dir_has_files() {
+  [[ -d "$MODEL_DIR" ]] && [[ -n "$(find "$MODEL_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]]
+}
+
+model_dir_is_too_large() {
+  if ! model_dir_has_files; then
+    return 1
+  fi
+  local size_mib
+  size_mib="$(model_dir_size_mib)"
+  [[ "$size_mib" =~ ^[0-9]+$ ]] && (( size_mib > MODEL_SIZE_LIMIT_MIB ))
+}
+
+move_large_model_dir_for_redownload() {
+  if [[ "$RUN_SETUP" != "1" || "$DOWNLOAD_MODEL" != "1" ]]; then
+    return 0
+  fi
+  if ! model_dir_is_too_large; then
+    return 0
+  fi
+
+  local size_mib backup_dir
+  size_mib="$(model_dir_size_mib)"
+  backup_dir="${MODEL_DIR}_wrong_large_$(date +%Y%m%d_%H%M%S)"
+  echo "WARNING: $MODEL_DIR is ${size_mib} MiB, larger than ${MODEL_SIZE_LIMIT_MIB} MiB."
+  echo "Moving it aside so setup can download the requested small model:"
+  echo "  $MODEL_DIR -> $backup_dir"
+  mv "$MODEL_DIR" "$backup_dir"
+}
+
+move_large_model_dir_for_redownload
+
 if [[ "$RUN_SETUP" == "1" ]]; then
   SETUP_ARGS=(
     --env-mode "$ENV_MODE"
@@ -198,14 +234,14 @@ check_small_model_dir() {
     echo "Run without --no-setup/--no-download-model so the script can download it."
     exit 1
   fi
-  if [[ -z "$(find "$MODEL_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)" ]]; then
+  if ! model_dir_has_files; then
     echo "Model directory is empty: $MODEL_DIR"
     echo "Run without --no-setup/--no-download-model so the script can download it."
     exit 1
   fi
 
   local size_mib
-  size_mib="$(du -sm "$MODEL_DIR" | awk '{print $1}')"
+  size_mib="$(model_dir_size_mib)"
   echo "Model directory size: ${size_mib} MiB"
   if [[ "$size_mib" =~ ^[0-9]+$ ]] && (( size_mib > MODEL_SIZE_LIMIT_MIB )); then
     cat >&2 <<EOF

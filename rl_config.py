@@ -80,3 +80,4 @@ class MVPConfig:
     use_remove_padding: bool = True
     command_file: str = "run_verl_stock_grpo.sh"
     auto_download_model: bool = True
+    write_report: bool = True

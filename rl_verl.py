@@ -72,6 +72,8 @@ def make_verl_command(cfg: MVPConfig, train_path: Path, valid_path: Path) -> str
     reward_path = project_root / "rl_reward.py"
     repo = Path(cfg.verl_dir).expanduser().resolve()
     data_root = Path(cfg.data_dir).expanduser().resolve()
+    run_root = Path(cfg.run_dir).expanduser().resolve() if cfg.run_dir else train_path.parent.parent.resolve()
+    verl_file_logger_path = run_root / "verl" / "training_metrics.jsonl"
     model_path = resolve_model_path_for_command(cfg.model_path)
     python_bin = Path(sys.executable).resolve()
     total_seq_len = int(cfg.max_prompt_length) + int(cfg.max_response_length)
@@ -95,6 +97,7 @@ set -xeuo pipefail
 export PYTHONPATH="{project_root}:{repo}:${{PYTHONPATH:-}}"
 export STOCK_AGENT_DATA_DIR="{data_root}"
 export HYDRA_FULL_ERROR=1
+export VERL_FILE_LOGGER_PATH="{verl_file_logger_path}"
 
 cd "{repo}"
 "{python_bin}" -m ray.scripts.scripts stop --force || true
@@ -159,7 +162,7 @@ cd "{repo}"
   reward.reward_manager.name=naive \\
   reward.num_workers={cfg.reward_num_workers} \\
   trainer.critic_warmup=0 \\
-  trainer.logger='["console"]' \\
+  trainer.logger='["console","file"]' \\
   trainer.project_name=stock_agent_rl_mvp \\
   trainer.experiment_name=qwen3_4b_sse50_grpo_full \\
   trainer.n_gpus_per_node={cfg.n_gpus_per_node} \\

@@ -38,6 +38,7 @@ from rl_config import MVPConfig
 from rl_data import build_data
 from rl_dataset import export_verl_dataset
 from rl_reward import compute_score
+from rl_report import generate_report_for_latest, generate_report_for_run
 from rl_sft import export_sft_dataset, write_sft_command_script
 from rl_tools import (
     get_fundamental_snapshot,
@@ -88,6 +89,8 @@ def parse_args(argv: list[str] | None = None) -> MVPConfig:
             "print-sft-command",
             "train-latest",
             "download-hints",
+            "report-latest",
+            "report-run",
         ],
     )
     p.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
@@ -165,9 +168,12 @@ def parse_args(argv: list[str] | None = None) -> MVPConfig:
     p.add_argument("--command-file", default="run_verl_stock_grpo.sh")
     p.add_argument("--no-auto-download-model", dest="auto_download_model", action="store_false")
     p.add_argument("--no-write-verl-command", dest="write_verl_command", action="store_false")
+    p.add_argument("--write-report", dest="write_report", action="store_true")
+    p.add_argument("--no-write-report", dest="write_report", action="store_false")
     p.set_defaults(
         write_verl_command=True,
         auto_download_model=True,
+        write_report=True,
         use_remove_padding=True,
         actor_fsdp_param_offload=False,
         actor_fsdp_optimizer_offload=False,
@@ -245,6 +251,7 @@ def main(
     use_remove_padding: bool = True,
     command_file: str = "run_verl_stock_grpo.sh",
     auto_download_model: bool = True,
+    write_report: bool = True,
 ) -> dict[str, Any]:
     cfg = MVPConfig(
         mode=mode,
@@ -312,8 +319,20 @@ def main(
         use_remove_padding=use_remove_padding,
         command_file=command_file,
         auto_download_model=auto_download_model,
+        write_report=write_report,
     )
     random.seed(cfg.seed)
+
+    if cfg.mode == "report-latest":
+        report_dir = generate_report_for_latest(cfg.result_dir, cfg.data_dir)
+        return {"report_dir": str(report_dir)}
+
+    if cfg.mode == "report-run":
+        if not cfg.run_dir:
+            raise ValueError("--mode report-run requires --run-dir")
+        report_dir = generate_report_for_run(cfg.run_dir, cfg.data_dir)
+        return {"report_dir": str(report_dir)}
+
     dirs = ensure_dirs(cfg)
     config_for_log = {k: ("***" if k == "tushare_token" and v else v) for k, v in asdict(cfg).items()}
     (dirs["run"] / "run_config.json").write_text(
@@ -349,6 +368,7 @@ def main(
     if cfg.mode in ("all", "all-train", "rule-rollout"):
         metrics_path = run_rule_rollout(cfg)
         results["rule_metrics"] = str(metrics_path)
+        _maybe_write_report(cfg, dirs, results)
 
     if cfg.mode in ("all", "all-train", "print-sft-command"):
         sft_script = write_sft_command_script(cfg)
@@ -366,8 +386,11 @@ def main(
 
     if cfg.mode == "all-train":
         script = Path(str(results["verl_command_file"]))
-        run_verl_command_script(script)
-        results["verl_launched"] = True
+        try:
+            run_verl_command_script(script)
+            results["verl_launched"] = True
+        finally:
+            _maybe_write_report(cfg, dirs, results)
 
     if cfg.mode == "train-latest":
         script = find_latest_verl_command(cfg.result_dir, cfg.command_file)
@@ -376,6 +399,16 @@ def main(
         results["verl_launched"] = True
 
     return results
+
+
+def _maybe_write_report(cfg: MVPConfig, dirs: dict[str, Path], results: dict[str, Any]) -> None:
+    if not cfg.write_report:
+        return
+    try:
+        report_dir = generate_report_for_run(dirs["run"], cfg.data_dir)
+        results["report_dir"] = str(report_dir)
+    except Exception as exc:
+        log(f"Report generation skipped: {exc}")
 
 
 if __name__ == "__main__":

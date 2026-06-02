@@ -13,10 +13,30 @@ MVP for a stock search-agent RLVR experiment with Tushare data and verl.
 - `rl_dataset.py`: prompt building and verl parquet export.
 - `rl_baseline.py`: local rule-agent baseline and metrics.
 - `rl_verl.py`: model download helpers and generated verl command.
-- `data/`: local downloaded market data cache. Ignored by git.
+- `rl_report.py`: report builder for CSV/Markdown tables, SVG figures, and one summary PDF.
+- `data/`: local/reusable market data cache. Parquet caches can be synced to avoid slow repeated Tushare calls.
 - `model/`: local model weights, for example `model/Qwen3-4B`. Ignored by git.
 - `result/`: per-run outputs. Each run creates `HHMMSS_MMDD_result/`. Ignored by git except `.gitkeep`.
 - `verl-main/`: local verl framework copy used by the generated training script.
+
+## Experiment Flow
+
+```mermaid
+flowchart TD
+    A["Clone repo / run setup"] --> B["Download or reuse Qwen model"]
+    A --> C["Load cached parquet data or fetch Tushare"]
+    C --> D["Build point-in-time SSE50 universe"]
+    D --> E["Build T+5 hidden labels"]
+    D --> F["Build searchable tool tables"]
+    E --> G["Export verl train/valid parquet"]
+    F --> G
+    E --> H["Run rule-agent baseline"]
+    F --> H
+    G --> I["GRPO multi-turn tool-agent training"]
+    I --> J["verl JSONL reward metrics"]
+    H --> K["Report tables + SVG figures + PDF"]
+    J --> K
+```
 
 ## Quick Start
 
@@ -155,6 +175,39 @@ Current full-flow version builds:
 - veRL multi-turn GRPO parquet data and command script
 - optional rule-trajectory SFT parquet data and SFT command script
 - rule baseline metrics: reward, accuracy, Macro-F1, Brier, Rank IC, and top-bottom return
+- report artifacts for mentor review: CSV/Markdown tables, SVG charts, and `stock_agent_rl_report.pdf`
+
+Each run writes reports under:
+
+```bash
+result/<HHMMSS_MMDD_result>/report/
+```
+
+Important report files:
+
+- `stock_agent_rl_report.pdf`: summary bundle for mentor review.
+- `report_index.md`: clickable report index with artifact list and short interpretation.
+- `tables/reward_progress.csv`: first/last/best RL reward and reward delta parsed from verl JSONL metrics.
+- `tables/baseline_vs_rl_reward.csv`: rule baseline reward plus RL first/last/best reward.
+- `tables/baseline_metrics.csv`: rule baseline reward, accuracy, Macro-F1, Brier, Rank IC, and top-bottom return.
+- `figures/rl_reward_curve.svg`: RL reward curve.
+- `figures/baseline_vs_rl_reward.svg`: baseline vs RL reward bars.
+- `figures/baseline_mean_reward_by_split.svg`: rule baseline reward by split.
+- `figures/label_distribution.svg` and `figures/prediction_distribution.svg`: data and prediction sanity checks.
+- `figures/rule_reward_histogram.svg`: sample-level rule reward distribution.
+- `figures/alpha_score_vs_future_relative_return.svg`: rule alpha score versus realized relative return.
+
+If training failed or was interrupted, generate a report from the newest run with:
+
+```bash
+python3 stock_agent_rl_mvp.py --mode report-latest
+```
+
+For a specific run directory:
+
+```bash
+python3 stock_agent_rl_mvp.py --mode report-run --run-dir result/HHMMSS_MMDD_result
+```
 
 If you only want to build data and generate the training script:
 
