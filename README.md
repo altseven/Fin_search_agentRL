@@ -162,6 +162,16 @@ bash run_stock_agent_rl.sh "your_token"
 
 这个入口默认使用 `Qwen/Qwen3-4B`、8 卡 A800 profile、全参数 GRPO，并保留基本面工具。基本面数据里的空 `ann_date` 会被自动过滤，不需要额外加 `--no-fetch-fundamentals`。
 
+如果云服务器只给了 4 卡 A800，先用 4 卡入口跑通：
+
+```bash
+cd /kunlun_data/temp_ag_rl/Fin_search_agentRL
+git pull origin master
+bash run_stock_a800_4gpu.sh "your_token"
+```
+
+这个入口默认安装 `flash-attn`，因为当前 verl 训练阶段会 import `flash_attn.bert_padding`；然后用 `Qwen/Qwen3-4B`、4 卡、`rollout_tp=2`、较小 batch 跑 full flow。完整日志写到 `output_a800_4gpu.log`。
+
 Advanced direct Python entry:
 
 ```bash
