@@ -16,6 +16,9 @@ model/*
 result/*
 !result/.gitkeep
 
+# Generated technical reports and LaTeX build artifacts.
+tech_report/
+
 # Optional generated root-level training launcher; the script now writes it under result/<run_id>/.
 run_verl_stock_grpo.sh
 
